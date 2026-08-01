@@ -21,6 +21,8 @@ export interface ResearchDataAvailability {
     purpose: string;
   }>;
   matching_record_count: number;
+  matching_countries: string[];
+  matching_products: string[];
   estimated_context_tokens: number;
   context_budget_tokens: number;
   context_usage_percent: number;

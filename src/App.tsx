@@ -36,6 +36,7 @@ const productOptions = [
   "바이오헬스", "화장품", "농수산식품", "섬유", "가전", "생활용품",
 ];
 const ALL_SCOPE_VALUE = "__all__";
+const pipelineStages: Stage[] = ["data", "trade", "visualization", "news", "rca", "planner", "writer", "qa"];
 
 function App() {
   const [request, setRequest] = useState(initialRequest);
@@ -57,6 +58,21 @@ function App() {
     if (last?.stage) return last.stage;
     if (selectedRun?.status === "completed") return "completed";
     return "manager";
+  }, [events, selectedRun]);
+
+  const highlightedStage = useMemo<Stage | null>(() => {
+    const latestPipelineEvent = events.slice().reverse().find((event) => pipelineStages.includes(event.stage));
+    if (latestPipelineEvent) return latestPipelineEvent.stage;
+    const persistedStage = selectedRun?.current_stage;
+    if (persistedStage && pipelineStages.includes(persistedStage as Stage)) return persistedStage as Stage;
+    if (dataContext) return "data";
+    return selectedRun?.status === "completed" ? "qa" : null;
+  }, [dataContext, events, selectedRun]);
+
+  const reportActivated = useMemo(() => {
+    if (selectedRun?.result?.report) return true;
+    if (events.some((event) => ["writer", "qa", "completed"].includes(event.stage))) return true;
+    return ["writer", "qa", "completed"].includes(selectedRun?.current_stage ?? "");
   }, [events, selectedRun]);
 
   async function startResearch(event: FormEvent) {
@@ -144,7 +160,7 @@ function App() {
         <p className="hero-copy">데이터 특이점부터 뉴스, RCA 분석, 검증된 보고서까지. 각 단계의 공개 작업 로그와 산출물을 한 화면에서 확인합니다.</p>
       </section>
 
-      <section className="workspace">
+      <section className={`workspace ${reportActivated ? "report-active" : "report-minimized"}`}>
         <aside className="control-rail">
           <form onSubmit={startResearch} className="research-form">
             <div className="form-heading"><span>01</span><h2>Research brief</h2></div>
@@ -179,13 +195,16 @@ function App() {
         <section className="analysis-panel" aria-live="polite">
           <div className="panel-heading"><div><span className="section-kicker">LIVE EXECUTION</span><h2>Generation timeline</h2></div><span className="step-count">{Math.min(stageMeta[activeStage].index + 1, 8)} / 8</span></div>
           <div className="timeline">
-            {(["data", "trade", "visualization", "news", "rca", "planner", "writer", "qa"] as Stage[]).map((stage) => {
+            {pipelineStages.map((stage) => {
               const stageEvents = events.filter((item) => item.stage === stage);
-              const isCurrent = stage === activeStage;
+              const isLatest = stage === highlightedStage;
+              const isCurrent = isLatest && loading && activeStage !== "completed" && activeStage !== "error";
               const isComplete = stageEvents.some((item) => item.event === "stage_completed") || stageMeta[activeStage].index > stageMeta[stage].index;
-              return <button type="button" aria-pressed={inspectedStage === stage} className={`timeline-item ${isCurrent ? "current" : ""} ${isComplete ? "complete" : ""} ${inspectedStage === stage ? "inspected" : ""}`} key={stage} onClick={() => setInspectedStage(stage)}>
+              const isStuck = isLatest && selectedRun?.status === "failed";
+              const stageState = isCurrent ? "RUNNING" : isStuck ? "STUCK" : isLatest ? "CHECKED" : isComplete ? "DONE" : "QUEUED";
+              return <button type="button" aria-current={isLatest ? "step" : undefined} aria-pressed={inspectedStage === stage} className={`timeline-item ${isCurrent ? "current" : ""} ${isLatest ? "latest" : ""} ${isStuck ? "stuck" : ""} ${isComplete ? "complete" : ""} ${inspectedStage === stage ? "inspected" : ""}`} key={stage} onClick={() => setInspectedStage(stage)}>
                 <div className="timeline-pin"><span /></div>
-                <div className="timeline-content"><div className="timeline-title"><span>{String(stageMeta[stage].index).padStart(2, "0")}</span><h3>{stageMeta[stage].label}</h3><b>{isCurrent ? "RUNNING" : isComplete ? "DONE" : "QUEUED"}</b></div><p>{latestMessage(stageEvents) ?? stageMeta[stage].detail}</p>{stage === "data" && <DataContextMeter context={contextForStage(stageEvents, selectedRun) ?? dataContext} />}{stageEvents.at(-1)?.payload && <PayloadSummary payload={stageEvents.at(-1)?.payload} />}</div>
+                <div className="timeline-content"><div className="timeline-title"><span>{String(stageMeta[stage].index).padStart(2, "0")}</span><h3>{stageMeta[stage].label}</h3><b>{stageState}</b></div><p>{latestMessage(stageEvents) ?? stageMeta[stage].detail}</p>{stage === "data" && <DataContextMeter context={contextForStage(stageEvents, selectedRun) ?? dataContext} />}{stageEvents.at(-1)?.payload && <PayloadSummary payload={stageEvents.at(-1)?.payload} />}</div>
               </button>;
             })}
           </div>
@@ -194,18 +213,52 @@ function App() {
           <p className="process-note">작업 로그는 Agent가 반환한 단계 상태와 근거 요약입니다. 비공개 내부 추론은 표시하지 않습니다.</p>
         </section>
 
-        <section id="report" className="report-panel">
-          <div className="panel-heading"><div><span className="section-kicker">FINAL OUTPUT</span><h2>Research report</h2></div>{selectedRun?.result && <button className="print-button" onClick={() => window.print()}>PRINT ↗</button>}</div>
-          {selectedRun?.result ? <ReportView run={selectedRun} /> : <ReportEmpty loading={loading} />}
+        <section id="report" className={`report-panel ${reportActivated ? "active" : "minimized"}`}>
+          {reportActivated ? <><div className="panel-heading"><div><span className="section-kicker">FINAL OUTPUT</span><h2>Research report</h2></div>{selectedRun?.result && <button className="print-button" onClick={() => window.print()}>PRINT ↗</button>}</div>
+            {selectedRun?.result ? <ReportView run={selectedRun} /> : <ReportEmpty loading={loading} />}</> : <AgentActivityPanel stage={highlightedStage} events={events} output={highlightedStage ? getStageOutput(highlightedStage, events, selectedRun) : null} context={dataContext} error={error} />}
         </section>
       </section>
     </main>
   );
 }
 
+const activityTasks: Partial<Record<Stage, string[]>> = {
+  data: ["선택한 Excel 시트와 기간 범위를 확인합니다.", "국가·품목 조합과 데이터 행을 검증합니다.", "Trade Agent에 전달할 입력 크기를 계산합니다."],
+  trade: ["선택 범위의 수출입 지표를 집계합니다.", "금액·중량·단가 흐름을 비교합니다.", "통계적·경제적 이상점 후보를 생성합니다."],
+  visualization: ["필수 탐색 차트 패키지를 검증합니다.", "이상점과 지표를 Matplotlib 차트로 렌더링합니다.", "보고서에 사용할 차트 근거를 요약합니다."],
+  news: ["선택된 특이점에 맞는 정책·시장 사건을 조사합니다.", "사건 날짜와 대상 국가·품목의 일치 여부를 확인합니다.", "확정 원인과 가능한 설명을 구분합니다."],
+  rca: ["외부·학술 근거를 특이점 및 차트와 연결합니다.", "전달 경로와 대안 설명을 비교합니다.", "근거 수준을 제한적으로 분류합니다."],
+  planner: ["보고서에 쓸 핵심 특이점과 차트를 선택합니다.", "연구 질문, 구성, 분량을 정리합니다.", "후속 보고서가 사용할 근거 연결을 확정합니다."],
+};
+
+function AgentActivityPanel({ stage, events, output, context, error }: { stage: Stage | null; events: TimelineEvent[]; output: unknown; context: ResearchDataAvailability | null; error: string | null }) {
+  const active = stage ?? "data";
+  const stageEvents = events.filter((event) => event.stage === active).slice(-4);
+  const tasks = activityTasks[active] ?? ["리서치 실행을 준비합니다.", "선택 범위와 사용 가능한 근거를 기다립니다.", "실행이 시작되면 단계별 산출물을 표시합니다."];
+  const signals = outputSignals(output);
+
+  return <div className="agent-activity" aria-live="polite">
+    <header className="agent-activity-header"><div><span className="section-kicker">LIVE AGENT WORKSPACE</span><h2>{stageMeta[active].label}</h2><p>{stageMeta[active].detail}</p></div><span className={`agent-status ${error ? "blocked" : ""}`}>{error ? "BLOCKED" : stage ? "ACTIVE" : "WAITING"}</span></header>
+    <section className="activity-section"><span className="activity-label">CURRENT WORK</span><ol className="activity-tasks">{tasks.map((task, index) => <li key={task} className={index === 0 ? "doing" : ""}><span>{String(index + 1).padStart(2, "0")}</span>{task}</li>)}</ol></section>
+    {active === "data" && <section className="activity-section"><span className="activity-label">INPUT CONTEXT</span><DataContextMeter context={context} /></section>}
+    {signals.length > 0 && <section className="activity-section"><span className="activity-label">LATEST ARTIFACT SIGNALS</span><div className="activity-signals">{signals.map((signal) => <div key={signal.label}><span>{signal.label}</span><b>{signal.value}</b></div>)}</div></section>}
+    <section className="activity-section"><span className="activity-label">EXECUTION TRACE</span><div className="activity-trace">{stageEvents.length ? stageEvents.map((event) => <p key={event.id}><time>{event.event.replaceAll("_", " ")}</time>{event.message}</p>) : <p><time>ready</time>선택 범위를 확인한 뒤 이 에이전트의 실행 기록이 표시됩니다.</p>}</div></section>
+    <p className="activity-note">공개 실행 상태와 산출물 요약만 표시합니다. 비공개 내부 추론은 노출하지 않습니다.</p>
+  </div>;
+}
+
+function outputSignals(output: unknown): Array<{ label: string; value: string }> {
+  if (!isRecord(output)) return [];
+  return Object.entries(output).filter(([key]) => !["html", "markdown", "data_points", "normalized_trade_data"].includes(key)).slice(0, 6).map(([key, value]) => ({
+    label: humanize(key),
+    value: Array.isArray(value) ? `${value.length} items` : typeof value === "object" && value !== null ? `${Object.keys(value).length} fields` : formatPrimitive(value),
+  }));
+}
+
 type ContextMeterData = Pick<ResearchDataAvailability, "estimated_context_tokens" | "context_budget_tokens" | "context_usage_percent" | "context_level" | "context_safe"> & {
   matching_record_count?: number;
   selected_record_count?: number;
+  matching_products?: string[];
 };
 
 function contextForStage(events: TimelineEvent[], run: RunDetail | null): ContextMeterData | null {
@@ -232,6 +285,7 @@ function DataContextMeter({ context }: { context: ContextMeterData | null }) {
     <div><span>CSV / Excel context</span><b>{formatTokenCount(context.estimated_context_tokens)} / {formatTokenCount(context.context_budget_tokens)} tokens</b></div>
     <div className="context-track"><span style={{ width: `${percent}%` }} /></div>
     <small>{recordCount.toLocaleString()} rows · {context.context_usage_percent}% · {context.context_safe ? context.context_level.toUpperCase() : "TOO LARGE — narrow the scope"}</small>
+    {context.matching_products?.length ? <small className="effective-scope">실제 파일 품목 범위: {context.matching_products.join(", ")}</small> : null}
   </div>;
 }
 
