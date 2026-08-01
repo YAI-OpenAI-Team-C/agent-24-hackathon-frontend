@@ -1,4 +1,4 @@
-import type { Report, RunAccepted, RunRequest, TimelineEvent, AgentKey } from "./types";
+import type { ContextEstimate, FilterOptions, Report, RunAccepted, RunRequest, TimelineEvent, AgentKey } from "./types";
 
 export const API_BASE = import.meta.env.VITE_API_BASE_URL ?? "http://127.0.0.1:8000/api/v1";
 
@@ -6,6 +6,15 @@ export async function createRun(request: RunRequest): Promise<RunAccepted> {
   const response = await fetch(`${API_BASE}/runs`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(request) });
   if (!response.ok) throw new Error(await response.text());
   return response.json();
+}
+
+export async function getFilterOptions():Promise<FilterOptions> {
+  const response=await fetch(`${API_BASE}/runs/meta/options`); if(!response.ok) throw new Error("필터 목록을 불러오지 못했습니다."); return response.json();
+}
+
+export async function estimateContext(request:RunRequest):Promise<ContextEstimate> {
+  const response=await fetch(`${API_BASE}/runs/context-estimate`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(request)});
+  if(!response.ok) throw new Error("컨텍스트 크기를 계산하지 못했습니다."); return response.json();
 }
 
 export async function getReport(id: string): Promise<Report> {
