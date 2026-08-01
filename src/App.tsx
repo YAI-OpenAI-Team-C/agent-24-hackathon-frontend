@@ -18,7 +18,7 @@ export default function App() {
   const activeAgent = events.at(-1)?.agent; const lastEvent = events.at(-1);
   const completedStages = useMemo(() => new Set(events.map(event => event.stage.split(".")[0])), [events]);
   useEffect(()=>{getFilterOptions().then(options=>{setFilterOptions(options);setRequest(current=>({...current,products:current.products[0]==="__all__"&&options.products.some(p=>p.value==="854232")?["854232"]:current.products,start_period:current.start_period??shiftMonth(options.period_end,-5)??options.period_start,end_period:current.end_period??options.period_end}));}).catch(()=>undefined);},[]);
-  useEffect(()=>{const timer=window.setTimeout(()=>estimateContext(request).then(setContext).catch(()=>setContext(null)),250);return()=>window.clearTimeout(timer);},[request.countries,request.products,request.start_period,request.end_period]);
+  useEffect(()=>{const timer=window.setTimeout(()=>estimateContext(request).then(setContext).catch(()=>setContext(null)),250);return()=>window.clearTimeout(timer);},[request.input,request.countries,request.products,request.start_period,request.end_period]);
 
   async function run(event: FormEvent) {
     event.preventDefault(); setLoading(true); setEvents([]); setReport(null); setError("");

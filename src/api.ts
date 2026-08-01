@@ -1,6 +1,6 @@
 import type { ContextEstimate, FilterOptions, Report, RunAccepted, RunRequest, TimelineEvent, AgentKey } from "./types";
 
-export const API_BASE = import.meta.env.VITE_API_BASE_URL ?? "http://127.0.0.1:8000/api/v1";
+export const API_BASE = import.meta.env.VITE_API_BASE_URL ?? "http://127.0.0.1:8001/api/v1";
 
 export async function createRun(request: RunRequest): Promise<RunAccepted> {
   const response = await fetch(`${API_BASE}/runs`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(request) });
