@@ -162,7 +162,23 @@ function StructuredReport({ report }: { report: ReportDraft }) {
 }
 
 function StageInspector({ stage, output, onClose }: { stage: Stage; output: unknown; onClose: () => void }) {
-  return <section className="stage-inspector" aria-label={`${stageMeta[stage].label} 전체 출력`}><div><span className="section-kicker">FULL STRUCTURED OUTPUT</span><h3>{stageMeta[stage].label}</h3></div><button type="button" className="close-inspector" onClick={onClose} aria-label="전체 출력 닫기">×</button>{output ? <pre>{JSON.stringify(output, null, 2)}</pre> : <p>이 단계의 출력은 아직 준비되지 않았습니다. 완료된 단계 또는 저장된 실행을 선택하세요.</p>}</section>;
+  return <section className="stage-inspector" aria-label={`${stageMeta[stage].label} 전체 출력`}><div><span className="section-kicker">FULL STRUCTURED OUTPUT</span><h3>{stageMeta[stage].label}</h3></div><button type="button" className="close-inspector" onClick={onClose} aria-label="전체 출력 닫기">×</button>{output ? <OutputTree value={output} /> : <p>이 단계의 출력은 아직 준비되지 않았습니다. 완료된 단계 또는 저장된 실행을 선택하세요.</p>}</section>;
+}
+
+function OutputTree({ value }: { value: unknown }) {
+  return <div className="output-tree"><JsonNode label="Agent output" value={value} depth={0} /></div>;
+}
+
+function JsonNode({ label, value, depth }: { label: string; value: unknown; depth: number }) {
+  if (Array.isArray(value)) {
+    return <details className="tree-branch" open={depth < 1}><summary><span>{humanize(label)}</span><b>LIST · {value.length}</b></summary><div className="tree-children">{value.length ? value.map((item, index) => <JsonNode key={index} label={`Item ${index + 1}`} value={item} depth={depth + 1} />) : <span className="tree-empty">비어 있음</span>}</div></details>;
+  }
+  if (isRecord(value)) {
+    const entries = Object.entries(value);
+    return <details className="tree-branch" open={depth < 1}><summary><span>{humanize(label)}</span><b>OBJECT · {entries.length}</b></summary><div className="tree-children">{entries.map(([key, item]) => <JsonNode key={key} label={key} value={item} depth={depth + 1} />)}</div></details>;
+  }
+  const text = formatPrimitive(value);
+  return <div className={`tree-leaf ${text.length > 110 ? "long" : ""}`}><span>{humanize(label)}</span><p>{text}</p></div>;
 }
 
 function ReportEmpty({ loading }: { loading: boolean }) {
@@ -193,6 +209,21 @@ function getStageOutput(stage: Stage, events: TimelineEvent[], run: RunDetail | 
     qa: run.result.qa,
   };
   return storedOutput[stage] ?? null;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null;
+}
+
+function formatPrimitive(value: unknown): string {
+  if (value === null) return "null";
+  if (value === undefined) return "undefined";
+  if (typeof value === "string") return value;
+  return String(value);
+}
+
+function humanize(value: string): string {
+  return value.replaceAll("_", " ").replace(/([a-z])([A-Z])/g, "$1 $2");
 }
 
 function splitList(value: string): string[] {
