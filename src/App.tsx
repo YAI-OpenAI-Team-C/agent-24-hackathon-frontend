@@ -1,6 +1,8 @@
 import { FormEvent, Fragment, useEffect, useMemo, useState } from "react";
 import { API_BASE, createRun, estimateContext, getFilterOptions, getReport, pdfUrl, streamEvents } from "./api";
 import type { AgentKey, AnalysisFrequency, Chart, ContextEstimate, FilterOptions, Metric, MonthMetric, OutputType, Report, ReportSentence, RunRequest, TimelineEvent } from "./types";
+import { CountryTradeDrawer } from "./CountryTradeExplorer";
+import { InteractiveLinerChart } from "./InteractiveLinerChart";
 
 const AGENTS: { key: AgentKey; name: string; role: string }[] = [
   { key: "terra", name: "TERRA", role: "계획·판정" }, { key: "code", name: "CODE", role: "집계·조립" },
@@ -84,16 +86,18 @@ function ContextBar({context}:{context:ContextEstimate|null}) {
   const status=!context?"":context.matching_records===0?"NO DATA — 품목의 제공 기간을 확인하세요":context.safe?"READY":"TOO LARGE — 범위를 좁혀주세요";
   return <section className={`context-meter ${context?.matching_records===0?"critical":context?.level??"low"}`}><div><span>CONTEXT WINDOW</span><b>{context?`${(context.estimated_tokens/1000).toFixed(1)}K / 50K tokens`:"calculating…"}</b></div><i><b style={{width:`${visual}%`}}/></i>{context&&<small>{context.matching_records.toLocaleString()} rows · {percent}% · {status}</small>}</section>;
 }
-function InteractiveLinerChart({chart}:{chart:Chart}) {
-  const [expanded,setExpanded]=useState(false),[reloadKey,setReloadKey]=useState(0);
-  useEffect(()=>{if(!expanded)return;const close=(event:KeyboardEvent)=>{if(event.key==="Escape")setExpanded(false)};window.addEventListener("keydown",close);return()=>window.removeEventListener("keydown",close)},[expanded]);
-  return <div className={`interactive-chart ${expanded?"expanded":""}`} role={expanded?"dialog":undefined} aria-modal={expanded||undefined}>
-    <div className="chart-tools"><span>마우스를 올려 값 확인 · 범례 클릭으로 계열 토글</span><div><button type="button" onClick={()=>setReloadKey(key=>key+1)}>↻ 다시 보기</button><button type="button" onClick={()=>setExpanded(value=>!value)}>{expanded?"축소":"확대"}</button></div></div>
-    <iframe key={reloadKey} title={chart.title} sandbox="allow-scripts allow-popups" srcDoc={chart.html}/>
-  </div>;
-}
+type CountrySelectHandler = (country:string,source:HTMLIFrameElement)=>void;
 function ReportView({report}:{report:Report}) {
-  return report.output_type === "paper" ? <AcademicPaperView report={report}/> : <PolicyReportView report={report}/>;
+  const [selection,setSelection]=useState<{key:string;source:HTMLIFrameElement}|null>(null);
+  const drilldowns=report.timeseries?.country_drilldowns??[];
+  const detail=selection?drilldowns.find(item=>item.key===selection.key):undefined;
+  const selectCountry:CountrySelectHandler=(key,source)=>{
+    if(drilldowns.some(item=>item.key===key))setSelection({key,source});
+  };
+  return <>
+    {report.output_type === "paper" ? <AcademicPaperView report={report} onCountrySelect={selectCountry}/> : <PolicyReportView report={report} onCountrySelect={selectCountry}/>}
+    <CountryTradeDrawer detail={detail} currency={report.currency} returnFocus={selection?.source} onClose={()=>setSelection(null)}/>
+  </>;
 }
 function groupPaperSentences(sentences:ReportSentence[]):ReportSentence[][] {
   const groups:ReportSentence[][]=[]; let current:ReportSentence[]=[];
@@ -106,26 +110,26 @@ function groupPaperSentences(sentences:ReportSentence[]):ReportSentence[][] {
   if(current.length) groups.push(current);
   return groups;
 }
-function AcademicPaperView({report}:{report:Report}) {
+function AcademicPaperView({report,onCountrySelect}:{report:Report;onCountrySelect:CountrySelectHandler}) {
   const sections=report.sections??[], abstract=sections.find(s=>s.heading.toLowerCase().startsWith("abstract"));
   const body=sections.filter(s=>s!==abstract), ledger=report.evidence_audit?.ledger??[], ts=report.timeseries??{};
   return <article className="academic-paper">
     <header className="paper-title"><span>ORIGINAL RESEARCH · CUSTOMS STATISTICS</span><h1>{report.headline}</h1><p>Korea Customs Service bilateral trade statistics · Sample period {report.data_provenance?.period??report.period}</p></header>
     {abstract&&<section className="abstract"><h2>Abstract</h2><p>{abstract.sentences.map(s=>s.text).join(" ")}</p><small>Keywords: Korea trade; HS classification; export performance; evidence verification</small></section>}
-    {body.map(section=><section className="paper-section" key={section.heading}><h2>{section.heading}</h2>{groupPaperSentences(section.sentences).map((paragraph,index)=><p key={index}>{paragraph.map((sentence,sentenceIndex)=><Fragment key={sentenceIndex}>{sentenceIndex>0?" ":null}{sentence.text}{sentence.evidence?.length?<sup title={sentence.evidence.map(e=>e.title).join("; ")}> [{sentence.evidence.map((e,i)=>e.year?`${e.year}${i<sentence.evidence!.length-1?"; ":""}`:"n.d.").join("")}]</sup>:null}</Fragment>)}</p>)}{section.heading.toLowerCase().startsWith("results")&&<PaperFigures report={report}/>}</section>)}
+    {body.map(section=><section className="paper-section" key={section.heading}><h2>{section.heading}</h2>{groupPaperSentences(section.sentences).map((paragraph,index)=><p key={index}>{paragraph.map((sentence,sentenceIndex)=><Fragment key={sentenceIndex}>{sentenceIndex>0?" ":null}{sentence.text}{sentence.evidence?.length?<sup title={sentence.evidence.map(e=>e.title).join("; ")}> [{sentence.evidence.map((e,i)=>e.year?`${e.year}${i<sentence.evidence!.length-1?"; ":""}`:"n.d.").join("")}]</sup>:null}</Fragment>)}</p>)}{section.heading.toLowerCase().startsWith("results")&&<PaperFigures report={report} onCountrySelect={onCountrySelect}/>}</section>)}
     <section className="paper-references"><h2>References</h2>{ledger.length?ledger.map((row:any,index:number)=><p key={index}>{row.title}. ({row.year??"n.d."}). {row.url&&<a href={row.url} target="_blank" rel="noreferrer">{row.url}</a>}</p>):<p>No external references were accepted by the verification pipeline.</p>}</section>
     <footer className="paper-audit">Data records {report.audit?.input_records??0} · Evidence coverage {report.evidence_audit?.coverage_pct??0}% · Generated in {report.audit?.elapsed_sec??"-"} seconds</footer>
   </article>;
 }
-function PaperFigures({report}:{report:Report}) { const ts=report.timeseries??{}; return <div className="paper-figures"><figure><Trend rows={ts.monthly_series??[]} currency={report.currency}/><figcaption>Figure 1. Monthly trade value. Source: Korea Customs Service; authors' calculations.</figcaption></figure><figure><Composition rows={ts.items??[]}/><figcaption>Figure 2. Product composition. Source: Korea Customs Service; authors' calculations.</figcaption></figure>{report.charts?.map((chart,index)=><figure key={index}>{chart.ok&&chart.html?<InteractiveLinerChart chart={chart}/>:<Composition rows={chart.fallback_rows??[]}/>}<figcaption>Figure {index+3}. {chart.title}. {chart.ok?"Interactive Liner Visualization — hover, click legends, and expand to explore.":"Deterministic data fallback."}</figcaption></figure>)}</div> }
-function PolicyReportView({report}:{report:Report}) {
+function PaperFigures({report,onCountrySelect}:{report:Report;onCountrySelect:CountrySelectHandler}) { const ts=report.timeseries??{}; return <div className="paper-figures"><figure><Trend rows={ts.monthly_series??[]} currency={report.currency}/><figcaption>Figure 1. Monthly trade value. Source: Korea Customs Service; authors' calculations.</figcaption></figure><figure><Composition rows={ts.items??[]}/><figcaption>Figure 2. Product composition. Source: Korea Customs Service; authors' calculations.</figcaption></figure>{report.charts?.map((chart,index)=><figure key={index}>{chart.ok&&chart.html?<InteractiveLinerChart chart={chart} onCountrySelect={chart.kind==="country"?onCountrySelect:undefined}/>:<Composition rows={chart.fallback_rows??[]}/>}<figcaption>Figure {index+3}. {chart.title}. {chart.ok?"Interactive Liner Visualization — hover, click legends, and expand to explore.":"Deterministic data fallback."}</figcaption></figure>)}</div> }
+function PolicyReportView({report,onCountrySelect}:{report:Report;onCountrySelect:CountrySelectHandler}) {
   const ts=report.timeseries??{}, latest=ts.monthly_series?.at(-1), top=ts.items?.[0], evidence=report.evidence_audit??{}, audit=report.audit??{};
   return <article className="report-document"><div className="report-meta"><span>CONFIDENCE {report.confidence_level}</span><span>{report.period}</span></div><h2>{report.headline}</h2>
     <div className="kpis"><Kpi value={money(latest?.value_usd,report.currency)} label="당월 수출액" sub={`전월비 ${pct(latest?.mom_pct)}`}/><Kpi value={pct(latest?.yoy_pct)} label="전년동월비"/><Kpi value={top?.share==null?"n/a":`${(top.share*100).toFixed(1)}%`} label="1위 품목 비중" sub={top?.label}/><Kpi value={`${evidence.coverage_pct??0}%`} label="근거 커버리지" sub={`고유 출처 ${evidence.unique_sources??0}개`}/></div>
     <div className="viz-grid"><div className="viz-card"><h3>월별 수출 추이</h3><Trend rows={ts.monthly_series??[]} currency={report.currency}/></div><div className="viz-card"><h3>무엇이 움직였나</h3><Composition rows={ts.items??[]}/></div></div>
     <p className="provenance"><b>데이터 계보</b> · {report.data_provenance?.source??"관세청 무역통계"} · {report.data_provenance?.records??audit.input_records??0}건 · {report.data_provenance?.transform??"원자료 코드 집계"}</p>
     {report.sections?.map(section=><section key={section.heading}><h3>{section.heading}</h3>{section.sentences.map((sentence,index)=><div className="sentence" key={index}><span className={`badge ${sentence.status}`}>{sentence.status}</span><div><p>{sentence.text}</p>{sentence.evidence?.map((item,i)=><a className="evidence" key={i} href={item.url} target="_blank" rel="noreferrer">{item.title}{item.year?` (${item.year})`:""}<small>{item.quote}</small></a>)}</div></div>)}</section>)}
-    <EvidenceChain report={report}/>{report.charts?.length>0&&<section><h3>Liner visualizations</h3><div className="charts">{report.charts.map((chart,index)=><div className="chart" key={index}><h4>{chart.title}<span>{chart.ok?"INTERACTIVE LINER VIZ":"FALLBACK"}</span></h4>{chart.ok&&chart.html?<InteractiveLinerChart chart={chart}/>:<Composition rows={chart.fallback_rows??[]}/>}</div>)}</div></section>}
+    <EvidenceChain report={report}/>{report.charts?.length>0&&<section><h3>Liner visualizations</h3><div className="charts">{report.charts.map((chart,index)=><div className="chart" key={index}><h4>{chart.title}<span>{chart.ok?"INTERACTIVE LINER VIZ":"FALLBACK"}</span></h4>{chart.ok&&chart.html?<InteractiveLinerChart chart={chart} onCountrySelect={chart.kind==="country"?onCountrySelect:undefined}/>:<Composition rows={chart.fallback_rows??[]}/>}</div>)}</div></section>}
     {((report.anomaly_warnings?.length??0)+(report.revision_watch?.length??0)>0)&&<section className="warnings"><h3>사람이 확인할 지점</h3>{[...(report.anomaly_warnings??[]),...(report.revision_watch??[])].slice(0,6).map((item,i)=><pre key={i}>{JSON.stringify(item,null,2)}</pre>)}</section>}
   </article>
 }

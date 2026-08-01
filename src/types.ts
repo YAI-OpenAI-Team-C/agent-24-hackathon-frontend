@@ -16,12 +16,25 @@ export interface RunAccepted { id: string; status: string; events_url: string }
 export interface Evidence { title: string; url?: string; quote?: string; year?: number; citations?: number }
 export interface ReportSentence { text: string; status: string; evidence?: Evidence[] }
 export interface ReportSection { heading: string; sentences: ReportSentence[] }
-export interface Chart { title: string; ok: boolean; html?: string; fallback_rows?: Metric[] }
+export interface Chart { id?:string; kind?:"country"|"liner"; title: string; ok: boolean; html?: string; fallback_rows?: Metric[] }
 export interface Metric { label: string; value_usd: number; mom_pct?: number; yoy_pct?: number; share?: number }
 export interface MonthMetric { period: string; value_usd: number; mom_pct?: number; yoy_pct?: number }
+export interface CountryMetric extends Metric { key: string }
+export interface CountryTradeMonth { period:string; exports_usd:number; imports_usd:number; balance_usd:number }
+export interface CountryProduct { key:string; label:string; value_usd:number; share:number }
+export interface CountryDrilldown {
+  key:string; label:string; period:string;
+  exports_usd:number; imports_usd:number; balance_usd:number;
+  export_mom_pct?:number; import_mom_pct?:number; export_yoy_pct?:number; import_yoy_pct?:number;
+  monthly:CountryTradeMonth[]; top_exports:CountryProduct[]; top_imports:CountryProduct[];
+}
 export interface Report {
   headline: string; period: string; focus: string; confidence_level: string; output_type?: OutputType;
-  sections: ReportSection[]; charts: Chart[]; timeseries?: { monthly_series?: MonthMetric[]; items?: Metric[] };
+  direction?: "export"|"import"|"both";
+  sections: ReportSection[]; charts: Chart[]; timeseries?: {
+    monthly_series?: MonthMetric[]; items?: Metric[]; countries?: CountryMetric[];
+    country_drilldowns?: CountryDrilldown[];
+  };
   audit?: Record<string, any>; evidence_audit?: Record<string, any>; data_provenance?: Record<string, any>;
   anomaly_warnings?: Record<string, any>[]; revision_watch?: Record<string, any>[];
   currency?: "USD" | "KRW"; analysis_options?: Partial<RunRequest>;
