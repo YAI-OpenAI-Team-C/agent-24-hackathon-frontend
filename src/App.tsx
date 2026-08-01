@@ -3,7 +3,7 @@ import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import "./prompt.css";
 import { checkResearchAvailability, getChartImageUrl, getRun, listRuns, streamResearch } from "./api";
-import type { ChartArtifact, ReportDraft, ResearchDataAvailability, ResearchRequest, RunDetail, RunSummary, Stage, TimelineEvent, VisualizationResult } from "./types";
+import type { AnalysisFrequency, ChartArtifact, ComparisonBasis, ReportDraft, ResearchDataAvailability, ResearchRequest, RunDetail, RunSummary, Stage, TimelineEvent, VisualizationResult } from "./types";
 
 const stageMeta: Record<Stage, { label: string; detail: string; index: number }> = {
   manager: { label: "Research Manager", detail: "고정된 연구 흐름을 제어합니다.", index: 0 },
@@ -27,6 +27,8 @@ const initialRequest: ResearchRequest = {
   word_count: 300,
   start_period: "2025-04",
   end_period: "2025-06",
+  analysis_frequency: "monthly",
+  comparison_basis: ["previous_period", "same_period_previous_year"],
 };
 
 const countryOptions = ["중국", "미국", "아세안", "EU", "일본", "독일", "인도", "중동", "중남미", "CIS"];
@@ -171,13 +173,7 @@ function App() {
               <label>목표 단어 수<select value={request.word_count == null ? "any" : "target"} onChange={(event) => { if (event.target.value === "any") setRequest({ ...request, word_count: undefined }); else { const wordCount = request.word_count ?? 300; setRequest({ ...request, word_count: wordCount, length: Math.min(5000, Math.max(300, wordCount * 5)) }); } }}><option value="target">직접 지정</option><option value="any">제한 없음</option></select>{request.word_count == null ? <small className="field-note">단어 수는 QA에서 제한하지 않습니다.</small> : <input type="number" min="100" max="2000" value={request.word_count} onChange={(event) => { const wordCount = Number(event.target.value); setRequest({ ...request, word_count: wordCount || undefined, length: wordCount ? Math.min(5000, Math.max(300, wordCount * 5)) : request.length }); }} />}</label>
             </div>
             <label className="prompt-field">추가 연구 지시<textarea value={request.additional_prompt ?? ""} maxLength={2000} placeholder="예: 독일 수입 증가의 의미를 자세히 설명하고, 정책 제안은 제외하세요." onChange={(event) => setRequest({ ...request, additional_prompt: event.target.value || undefined })} /><small>보고서의 초점·독자·포함하거나 제외할 내용을 입력하세요. 자료에 없는 사실은 추가되지 않습니다.</small></label>
-            <div className="date-range" role="group" aria-label="분석 기간">
-              <span>분석 기간</span>
-              <div className="two-up">
-                <label>시작 월<input className="calendar-input" type="month" value={request.start_period} max={request.end_period} onChange={(event) => setRequest({ ...request, start_period: event.target.value })} /></label>
-                <label>종료 월<input className="calendar-input" type="month" value={request.end_period} min={request.start_period} onChange={(event) => setRequest({ ...request, end_period: event.target.value })} /></label>
-              </div>
-            </div>
+            <AnalysisPeriodControls request={request} onChange={setRequest} />
             <button className="run-button" disabled={loading} type="submit">{loading ? "ANALYZING…" : "START RESEARCH"}<span>↗</span></button>
           </form>
 
@@ -220,6 +216,83 @@ function App() {
       </section>
     </main>
   );
+}
+
+const frequencyOptions: Array<{ value: AnalysisFrequency; label: string; note: string }> = [
+  { value: "monthly", label: "월간", note: "월별 흐름과 전월·전년 동월 비교" },
+  { value: "quarterly", label: "분기", note: "분기 합계와 전분기·전년 동기 비교" },
+  { value: "half_yearly", label: "반기", note: "상·하반기 합계와 반기 비교" },
+  { value: "yearly", label: "연간", note: "연간 구조 변화와 CAGR 비교" },
+  { value: "custom", label: "사용자 지정", note: "선택한 월 범위를 그대로 비교" },
+];
+
+const comparisonOptions: Array<{ value: ComparisonBasis; label: string }> = [
+  { value: "previous_period", label: "이전 기간" },
+  { value: "same_period_previous_year", label: "전년 동기" },
+  { value: "historical_average", label: "장기 평균" },
+  { value: "cagr", label: "CAGR" },
+];
+
+function AnalysisPeriodControls({ request, onChange }: { request: ResearchRequest; onChange: (request: ResearchRequest) => void }) {
+  const frequency = request.analysis_frequency ?? "monthly";
+  const periodOptions = buildPeriodOptions(frequency);
+  const startValue = frequency === "monthly" || frequency === "custom" ? request.start_period : periodKey(frequency, request.start_period);
+  const endValue = frequency === "monthly" || frequency === "custom" ? request.end_period : periodKey(frequency, request.end_period);
+  const selectedFrequency = frequencyOptions.find((option) => option.value === frequency)!;
+
+  function updateFrequency(nextFrequency: AnalysisFrequency) {
+    const nextStart = resolvePeriod(nextFrequency, periodKey(nextFrequency, request.start_period));
+    const nextEnd = resolvePeriod(nextFrequency, periodKey(nextFrequency, request.end_period));
+    onChange({ ...request, analysis_frequency: nextFrequency, start_period: nextStart.start, end_period: nextEnd.end });
+  }
+
+  function updatePeriod(side: "start" | "end", key: string) {
+    const resolved = resolvePeriod(frequency, key);
+    onChange({ ...request, start_period: side === "start" ? resolved.start : request.start_period, end_period: side === "end" ? resolved.end : request.end_period });
+  }
+
+  function toggleComparison(basis: ComparisonBasis) {
+    const current = request.comparison_basis ?? [];
+    onChange({ ...request, comparison_basis: current.includes(basis) ? current.filter((item) => item !== basis) : [...current, basis] });
+  }
+
+  return <section className="analysis-period" aria-labelledby="analysis-frequency-title">
+    <label className="frequency-select"><span id="analysis-frequency-title">분석 주기</span><select value={frequency} onChange={(event) => updateFrequency(event.target.value as AnalysisFrequency)}>{frequencyOptions.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}</select><small>{selectedFrequency.note}</small></label>
+    <div className="date-range" role="group" aria-label="분석 기간">
+      <span>분석 기간</span>
+      <div className="two-up">
+        {frequency === "monthly" || frequency === "custom" ? <><label>시작 월<input className="calendar-input" type="month" value={request.start_period} max={request.end_period} onChange={(event) => onChange({ ...request, start_period: event.target.value })} /></label><label>종료 월<input className="calendar-input" type="month" value={request.end_period} min={request.start_period} onChange={(event) => onChange({ ...request, end_period: event.target.value })} /></label></> : <><label>시작 {periodUnitLabel(frequency)}<select value={startValue} onChange={(event) => updatePeriod("start", event.target.value)}>{periodOptions.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}</select></label><label>종료 {periodUnitLabel(frequency)}<select value={endValue} onChange={(event) => updatePeriod("end", event.target.value)}>{periodOptions.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}</select></label></>}
+      </div>
+    </div>
+    <fieldset className="comparison-basis"><legend>비교 기준</legend><div>{comparisonOptions.map((option) => <label key={option.value}><input type="checkbox" checked={(request.comparison_basis ?? []).includes(option.value)} onChange={() => toggleComparison(option.value)} />{option.label}</label>)}</div></fieldset>
+  </section>;
+}
+
+function buildPeriodOptions(frequency: AnalysisFrequency): Array<{ value: string; label: string }> {
+  const years = Array.from({ length: 7 }, (_, index) => 2021 + index);
+  if (frequency === "quarterly") return years.flatMap((year) => [1, 2, 3, 4].map((quarter) => ({ value: `${year}-Q${quarter}`, label: `${year}년 ${quarter}분기` })));
+  if (frequency === "half_yearly") return years.flatMap((year) => [{ value: `${year}-H1`, label: `${year}년 상반기` }, { value: `${year}-H2`, label: `${year}년 하반기` }]);
+  if (frequency === "yearly") return years.map((year) => ({ value: String(year), label: `${year}년` }));
+  return [];
+}
+
+function periodKey(frequency: AnalysisFrequency, period: string): string {
+  const [year, month = "01"] = period.split("-");
+  if (frequency === "quarterly") return `${year}-Q${Math.floor((Number(month) - 1) / 3) + 1}`;
+  if (frequency === "half_yearly") return `${year}-${Number(month) <= 6 ? "H1" : "H2"}`;
+  if (frequency === "yearly") return year;
+  return period;
+}
+
+function resolvePeriod(frequency: AnalysisFrequency, key: string): { start: string; end: string } {
+  if (frequency === "quarterly") { const [year, quarterValue] = key.split("-Q"); const startMonth = (Number(quarterValue) - 1) * 3 + 1; return { start: `${year}-${String(startMonth).padStart(2, "0")}`, end: `${year}-${String(startMonth + 2).padStart(2, "0")}` }; }
+  if (frequency === "half_yearly") { const [year, half] = key.split("-"); return half === "H2" ? { start: `${year}-07`, end: `${year}-12` } : { start: `${year}-01`, end: `${year}-06` }; }
+  if (frequency === "yearly") return { start: `${key}-01`, end: `${key}-12` };
+  return { start: key, end: key };
+}
+
+function periodUnitLabel(frequency: AnalysisFrequency): string {
+  return frequency === "quarterly" ? "분기" : frequency === "half_yearly" ? "반기" : "연도";
 }
 
 const activityTasks: Partial<Record<Stage, string[]>> = {

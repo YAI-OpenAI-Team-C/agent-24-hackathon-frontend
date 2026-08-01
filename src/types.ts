@@ -7,10 +7,15 @@ export interface ResearchRequest {
   length: number;
   start_period: string;
   end_period: string;
+  analysis_frequency?: AnalysisFrequency;
+  comparison_basis?: ComparisonBasis[];
   title?: string;
   additional_prompt?: string;
   word_count?: number;
 }
+
+export type AnalysisFrequency = "monthly" | "quarterly" | "half_yearly" | "yearly" | "custom";
+export type ComparisonBasis = "previous_period" | "same_period_previous_year" | "historical_average" | "cagr";
 
 export interface ResearchDataAvailability {
   available: boolean;
