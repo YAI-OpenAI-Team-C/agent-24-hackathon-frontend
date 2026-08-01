@@ -1,4 +1,4 @@
-export type Stage = "manager" | "planner" | "trade" | "news" | "gvc" | "writer" | "qa" | "completed" | "error";
+export type Stage = "manager" | "data" | "trade" | "visualization" | "planner" | "news" | "rca" | "writer" | "qa" | "completed" | "error";
 
 export interface ResearchRequest {
   countries: string[];
@@ -8,6 +8,17 @@ export interface ResearchRequest {
   start_period: string;
   end_period: string;
   title?: string;
+}
+
+export interface ResearchDataAvailability {
+  available: boolean;
+  message: string;
+  matching_sources: Array<{
+    file_path: string;
+    sheet_name: string;
+    purpose: string;
+  }>;
+  matching_record_count: number;
 }
 
 export interface TimelineEvent {
@@ -40,16 +51,20 @@ export interface ReportDraft {
   sections: ReportSection[];
   conclusion: string;
   limitations: string[];
+  claims: Array<{ claim_id: string; text: string; trade_evidence_ids: string[]; web_evidence_ids: string[]; scholar_evidence_ids: string[] }>;
   references: string[];
   markdown: string;
 }
 
 export interface ResearchResult {
   request: ResearchRequest;
-  plan: Record<string, unknown>;
+  data_check: Record<string, unknown> | null;
   trade_analysis: Record<string, unknown>;
+  anomaly_points: Record<string, unknown>[];
+  visualization: { html: string; theme: string; description: string; provider: string } | null;
+  report_plan: Record<string, unknown> | null;
   news_analysis: Record<string, unknown>;
-  gvc_analysis: Record<string, unknown>;
+  rca_analysis: Record<string, unknown> | null;
   report: ReportDraft;
   qa: Record<string, unknown>;
   revision_count: number;

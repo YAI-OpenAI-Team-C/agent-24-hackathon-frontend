@@ -1,19 +1,21 @@
 import { FormEvent, useEffect, useMemo, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
-import { getRun, listRuns, streamResearch } from "./api";
+import { checkResearchAvailability, getRun, listRuns, streamResearch } from "./api";
 import type { ReportDraft, ResearchRequest, RunDetail, RunSummary, Stage, TimelineEvent } from "./types";
 
 const stageMeta: Record<Stage, { label: string; detail: string; index: number }> = {
-  manager: { label: "Research Manager", detail: "입력 범위를 정리하고 실행을 제어합니다.", index: 0 },
-  planner: { label: "Planner", detail: "연구 질문과 보고서 구성을 설계합니다.", index: 1 },
-  trade: { label: "Trade Analysis", detail: "데이터 변화와 특이점을 계산·해석합니다.", index: 2 },
-  news: { label: "News & Policy", detail: "특이점의 뉴스·정책 근거를 조사합니다.", index: 3 },
-  gvc: { label: "GVC Analysis", detail: "공급망과 산업 영향을 통합합니다.", index: 4 },
-  writer: { label: "Report Writer", detail: "근거를 구조화된 보고서로 작성합니다.", index: 5 },
-  qa: { label: "Final QA", detail: "수치·출처·논리·구조를 점검합니다.", index: 6 },
-  completed: { label: "Complete", detail: "최종 보고서가 준비됐습니다.", index: 7 },
-  error: { label: "Pipeline error", detail: "실행이 중단됐습니다.", index: 7 },
+  manager: { label: "Research Manager", detail: "고정된 연구 흐름을 제어합니다.", index: 0 },
+  data: { label: "Data Check", detail: "자료 범위·시트·지원 가능 여부를 검사합니다.", index: 0 },
+  trade: { label: "Trade Analysis", detail: "분석 질문, 데이터 변화, 특이점을 도출합니다.", index: 1 },
+  visualization: { label: "Anomaly Visualization", detail: "상위 20개 이상점을 Liner Viz로 시각화합니다.", index: 2 },
+  planner: { label: "Report Planning", detail: "핵심 이상점과 보고서 구성을 결정합니다.", index: 3 },
+  news: { label: "News & Policy", detail: "선택된 특이점의 뉴스·정책 근거를 조사합니다.", index: 4 },
+  rca: { label: "RCA Analysis", detail: "비교우위·원인·경제적 영향을 분석합니다.", index: 5 },
+  writer: { label: "Report Writer", detail: "근거를 구조화된 보고서로 작성합니다.", index: 6 },
+  qa: { label: "Final QA", detail: "수치·출처·논리·구조를 점검합니다.", index: 7 },
+  completed: { label: "Complete", detail: "최종 보고서가 준비됐습니다.", index: 8 },
+  error: { label: "Pipeline error", detail: "실행이 중단됐습니다.", index: 8 },
 };
 
 const initialRequest: ResearchRequest = {
@@ -40,6 +42,7 @@ function App() {
   const [inspectedStage, setInspectedStage] = useState<Stage | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [noDataMessage, setNoDataMessage] = useState<string | null>(null);
 
   useEffect(() => {
     listRuns().then(setRuns).catch(() => undefined);
@@ -62,8 +65,18 @@ function App() {
       setError("종료 월은 시작 월보다 빠를 수 없습니다.");
       return;
     }
-    setLoading(true);
     setError(null);
+    try {
+      const availability = await checkResearchAvailability(request);
+      if (!availability.available) {
+        setNoDataMessage(availability.message);
+        return;
+      }
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "데이터 확인 중 오류가 발생했습니다.");
+      return;
+    }
+    setLoading(true);
     setEvents([]);
     setSelectedRun(null);
     setInspectedStage(null);
@@ -77,6 +90,11 @@ function App() {
       const detail = await getRun(runId);
       setSelectedRun(detail);
       setRuns((current) => [detail, ...current.filter((run) => run.id !== detail.id)]);
+      if (detail.status !== "completed" || !detail.result) {
+        const message = detail.error_message ?? "리서치가 완료되기 전에 중단되어 보고서를 만들지 못했습니다.";
+        setError(message);
+        if (isDataUnavailable(message)) setNoDataMessage(message);
+      }
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "알 수 없는 오류가 발생했습니다.");
     } finally {
@@ -87,7 +105,11 @@ function App() {
   async function selectRun(runId: string) {
     try {
       setError(null);
-      setSelectedRun(await getRun(runId));
+      const detail = await getRun(runId);
+      setSelectedRun(detail);
+      if (detail.status !== "completed" || !detail.result) {
+        setError(detail.error_message ?? "이 실행에는 생성된 보고서가 없습니다.");
+      }
       setEvents([]);
       setInspectedStage(null);
     } catch (caught) {
@@ -103,13 +125,14 @@ function App() {
         <p>TRADE INTELLIGENCE / RESEARCH CONSOLE</p>
         <span className={`system-state ${loading ? "live" : ""}`}>{loading ? "LIVE RUN" : "SYSTEM READY"}</span>
       </header>
+      {noDataMessage && <NoDataModal message={noDataMessage} onClose={() => setNoDataMessage(null)} />}
 
       <section className="hero">
         <div>
           <p className="eyebrow">MULTI-AGENT RESEARCH</p>
           <h1>무역의 변화가<br /><em>어디에서 시작됐는지.</em></h1>
         </div>
-        <p className="hero-copy">데이터 특이점부터 뉴스, GVC 해석, 검증된 보고서까지. 각 단계의 공개 작업 로그와 산출물을 한 화면에서 확인합니다.</p>
+        <p className="hero-copy">데이터 특이점부터 뉴스, RCA 분석, 검증된 보고서까지. 각 단계의 공개 작업 로그와 산출물을 한 화면에서 확인합니다.</p>
       </section>
 
       <section className="workspace">
@@ -144,9 +167,9 @@ function App() {
         </aside>
 
         <section className="analysis-panel" aria-live="polite">
-          <div className="panel-heading"><div><span className="section-kicker">LIVE EXECUTION</span><h2>Generation timeline</h2></div><span className="step-count">{Math.min(stageMeta[activeStage].index + 1, 7)} / 7</span></div>
+          <div className="panel-heading"><div><span className="section-kicker">LIVE EXECUTION</span><h2>Generation timeline</h2></div><span className="step-count">{Math.min(stageMeta[activeStage].index + 1, 8)} / 8</span></div>
           <div className="timeline">
-            {(["planner", "trade", "news", "gvc", "writer", "qa"] as Stage[]).map((stage) => {
+            {(["data", "trade", "visualization", "planner", "news", "rca", "writer", "qa"] as Stage[]).map((stage) => {
               const stageEvents = events.filter((item) => item.stage === stage);
               const isCurrent = stage === activeStage;
               const isComplete = stageEvents.some((item) => item.event === "stage_completed") || stageMeta[activeStage].index > stageMeta[stage].index;
@@ -168,6 +191,18 @@ function App() {
       </section>
     </main>
   );
+}
+
+function NoDataModal({ message, onClose }: { message: string; onClose: () => void }) {
+  return <div className="modal-backdrop" role="presentation" onMouseDown={onClose}>
+    <section className="data-modal" role="dialog" aria-modal="true" aria-labelledby="data-modal-title" onMouseDown={(event) => event.stopPropagation()}>
+      <span className="section-kicker">STEP 0 · DATA CHECK</span>
+      <h2 id="data-modal-title">선택한 범위에<br />사용 가능한 데이터가 없습니다.</h2>
+      <p>{message}</p>
+      <p className="modal-note">국가·품목·기간을 변경한 뒤 다시 확인하세요. 데이터가 없으면 에이전트 실행을 시작하지 않습니다.</p>
+      <button type="button" className="modal-button" onClick={onClose}>조건 수정하기 <span>←</span></button>
+    </section>
+  </div>;
 }
 
 function MultiSelectInput({
@@ -214,7 +249,8 @@ function StructuredReport({ report }: { report: ReportDraft }) {
 }
 
 function StageInspector({ stage, output, onClose }: { stage: Stage; output: unknown; onClose: () => void }) {
-  return <section className="stage-inspector" aria-label={`${stageMeta[stage].label} 전체 출력`}><div><span className="section-kicker">FULL STRUCTURED OUTPUT</span><h3>{stageMeta[stage].label}</h3></div><button type="button" className="close-inspector" onClick={onClose} aria-label="전체 출력 닫기">×</button>{output ? <OutputTree value={output} /> : <p>이 단계의 출력은 아직 준비되지 않았습니다. 완료된 단계 또는 저장된 실행을 선택하세요.</p>}</section>;
+  const visualization = stage === "visualization" && isRecord(output) && typeof output.html === "string" ? output : null;
+  return <section className="stage-inspector" aria-label={`${stageMeta[stage].label} 전체 출력`}><div><span className="section-kicker">FULL STRUCTURED OUTPUT</span><h3>{stageMeta[stage].label}</h3></div><button type="button" className="close-inspector" onClick={onClose} aria-label="전체 출력 닫기">×</button>{visualization && <iframe className="visualization-frame" sandbox="allow-scripts" srcDoc={visualization.html as string} title="Trade anomaly visualization" />}{output ? <OutputTree value={output} /> : <p>이 단계의 출력은 아직 준비되지 않았습니다. 완료된 단계 또는 저장된 실행을 선택하세요.</p>}</section>;
 }
 
 function OutputTree({ value }: { value: unknown }) {
@@ -253,10 +289,12 @@ function getStageOutput(stage: Stage, events: TimelineEvent[], run: RunDetail | 
   if (liveOutput) return liveOutput;
   if (!run?.result) return null;
   const storedOutput: Partial<Record<Stage, unknown>> = {
-    planner: run.result.plan,
+    data: run.result.data_check,
     trade: run.result.trade_analysis,
+    visualization: run.result.visualization,
+    planner: run.result.report_plan,
     news: run.result.news_analysis,
-    gvc: run.result.gvc_analysis,
+    rca: run.result.rca_analysis,
     writer: run.result.report,
     qa: run.result.qa,
   };
@@ -280,6 +318,10 @@ function humanize(value: string): string {
 
 function splitList(value: string): string[] {
   return value.split(",").map((item) => item.trim()).filter(Boolean);
+}
+
+function isDataUnavailable(message: string): boolean {
+  return message.includes("일치하는 무역 데이터가 없습니다");
 }
 
 function formatDate(value: string): string {

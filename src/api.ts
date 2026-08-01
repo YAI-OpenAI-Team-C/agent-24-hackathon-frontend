@@ -1,4 +1,4 @@
-import type { ResearchRequest, RunDetail, RunSummary, TimelineEvent } from "./types";
+import type { ResearchDataAvailability, ResearchRequest, RunDetail, RunSummary, TimelineEvent } from "./types";
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? "http://127.0.0.1:8000/api/v1";
 
@@ -11,6 +11,16 @@ export async function listRuns(): Promise<RunSummary[]> {
 export async function getRun(runId: string): Promise<RunDetail> {
   const response = await fetch(`${API_BASE_URL}/research/${runId}`);
   if (!response.ok) throw new Error("리서치 결과를 불러오지 못했습니다.");
+  return response.json();
+}
+
+export async function checkResearchAvailability(request: ResearchRequest): Promise<ResearchDataAvailability> {
+  const response = await fetch(`${API_BASE_URL}/research/availability`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(request),
+  });
+  if (!response.ok) throw new Error("선택한 범위의 데이터를 확인하지 못했습니다.");
   return response.json();
 }
 
