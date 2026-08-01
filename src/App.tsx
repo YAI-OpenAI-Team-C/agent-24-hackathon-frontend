@@ -3,7 +3,7 @@ import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import "./prompt.css";
 import { checkResearchAvailability, getChartImageUrl, getRun, listRuns, streamResearch } from "./api";
-import type { ChartArtifact, ReportDraft, ResearchRequest, RunDetail, RunSummary, Stage, TimelineEvent, VisualizationResult } from "./types";
+import type { ChartArtifact, ReportDraft, ResearchDataAvailability, ResearchRequest, RunDetail, RunSummary, Stage, TimelineEvent, VisualizationResult } from "./types";
 
 const stageMeta: Record<Stage, { label: string; detail: string; index: number }> = {
   manager: { label: "Research Manager", detail: "고정된 연구 흐름을 제어합니다.", index: 0 },
@@ -46,6 +46,7 @@ function App() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [noDataMessage, setNoDataMessage] = useState<string | null>(null);
+  const [dataContext, setDataContext] = useState<ResearchDataAvailability | null>(null);
 
   useEffect(() => {
     listRuns().then(setRuns).catch(() => undefined);
@@ -71,8 +72,13 @@ function App() {
     setError(null);
     try {
       const availability = await checkResearchAvailability(request);
+      setDataContext(availability);
       if (!availability.available) {
         setNoDataMessage(availability.message);
+        return;
+      }
+      if (!availability.context_safe) {
+        setError(availability.message);
         return;
       }
     } catch (caught) {
@@ -179,7 +185,7 @@ function App() {
               const isComplete = stageEvents.some((item) => item.event === "stage_completed") || stageMeta[activeStage].index > stageMeta[stage].index;
               return <button type="button" aria-pressed={inspectedStage === stage} className={`timeline-item ${isCurrent ? "current" : ""} ${isComplete ? "complete" : ""} ${inspectedStage === stage ? "inspected" : ""}`} key={stage} onClick={() => setInspectedStage(stage)}>
                 <div className="timeline-pin"><span /></div>
-                <div className="timeline-content"><div className="timeline-title"><span>{String(stageMeta[stage].index).padStart(2, "0")}</span><h3>{stageMeta[stage].label}</h3><b>{isCurrent ? "RUNNING" : isComplete ? "DONE" : "QUEUED"}</b></div><p>{latestMessage(stageEvents) ?? stageMeta[stage].detail}</p>{stageEvents.at(-1)?.payload && <PayloadSummary payload={stageEvents.at(-1)?.payload} />}</div>
+                <div className="timeline-content"><div className="timeline-title"><span>{String(stageMeta[stage].index).padStart(2, "0")}</span><h3>{stageMeta[stage].label}</h3><b>{isCurrent ? "RUNNING" : isComplete ? "DONE" : "QUEUED"}</b></div><p>{latestMessage(stageEvents) ?? stageMeta[stage].detail}</p>{stage === "data" && <DataContextMeter context={contextForStage(stageEvents, selectedRun) ?? dataContext} />}{stageEvents.at(-1)?.payload && <PayloadSummary payload={stageEvents.at(-1)?.payload} />}</div>
               </button>;
             })}
           </div>
@@ -195,6 +201,38 @@ function App() {
       </section>
     </main>
   );
+}
+
+type ContextMeterData = Pick<ResearchDataAvailability, "estimated_context_tokens" | "context_budget_tokens" | "context_usage_percent" | "context_level" | "context_safe"> & {
+  matching_record_count?: number;
+  selected_record_count?: number;
+};
+
+function contextForStage(events: TimelineEvent[], run: RunDetail | null): ContextMeterData | null {
+  const payload = events.at(-1)?.payload;
+  if (hasContextMetrics(payload)) return payload;
+  const dataCheck = run?.result?.data_check;
+  return hasContextMetrics(dataCheck) ? dataCheck : null;
+}
+
+function hasContextMetrics(value: unknown): value is ContextMeterData {
+  if (!value || typeof value !== "object") return false;
+  const metrics = value as Record<string, unknown>;
+  return typeof metrics.estimated_context_tokens === "number"
+    && typeof metrics.context_budget_tokens === "number"
+    && typeof metrics.context_usage_percent === "number"
+    && typeof metrics.context_level === "string";
+}
+
+function DataContextMeter({ context }: { context: ContextMeterData | null }) {
+  if (!context) return <div className="context-meter pending"><span>CSV / Excel context</span><small>실행 전 데이터 행을 확인하면 입력 크기를 계산합니다.</small></div>;
+  const recordCount = context.matching_record_count ?? context.selected_record_count ?? 0;
+  const percent = Math.min(context.context_usage_percent, 100);
+  return <div className={`context-meter ${context.context_level}`} aria-label={`Trade Agent context usage: ${context.context_usage_percent}%`}>
+    <div><span>CSV / Excel context</span><b>{formatTokenCount(context.estimated_context_tokens)} / {formatTokenCount(context.context_budget_tokens)} tokens</b></div>
+    <div className="context-track"><span style={{ width: `${percent}%` }} /></div>
+    <small>{recordCount.toLocaleString()} rows · {context.context_usage_percent}% · {context.context_safe ? context.context_level.toUpperCase() : "TOO LARGE — narrow the scope"}</small>
+  </div>;
 }
 
 function NoDataModal({ message, onClose }: { message: string; onClose: () => void }) {
@@ -387,6 +425,10 @@ function isDataUnavailable(message: string): boolean {
 
 function formatDate(value: string): string {
   return new Intl.DateTimeFormat("ko-KR", { month: "short", day: "numeric" }).format(new Date(value));
+}
+
+function formatTokenCount(value: number): string {
+  return new Intl.NumberFormat("en-US", { notation: "compact", maximumFractionDigits: 1 }).format(value);
 }
 
 export default App;

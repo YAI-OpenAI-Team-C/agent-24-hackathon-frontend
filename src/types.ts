@@ -21,6 +21,11 @@ export interface ResearchDataAvailability {
     purpose: string;
   }>;
   matching_record_count: number;
+  estimated_context_tokens: number;
+  context_budget_tokens: number;
+  context_usage_percent: number;
+  context_level: "low" | "medium" | "high" | "critical";
+  context_safe: boolean;
 }
 
 export interface TimelineEvent {
