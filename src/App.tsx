@@ -343,7 +343,7 @@ function MultiSelectInput({
 function ReportView({ run }: { run: RunDetail }) {
   const report = run.result!.report;
   const figures = resolveReportFigures(report, run.result!.visualization);
-  return <article className="report-document"><div className="report-meta"><span>RUN {run.id.slice(0, 8).toUpperCase()}</span><span>{run.request.start_period} — {run.request.end_period}</span></div>{report.markdown.trim() ? <div className="markdown-content"><ReactMarkdown remarkPlugins={[remarkGfm]}>{report.markdown}</ReactMarkdown></div> : <StructuredReport report={report} />}{figures.length > 0 && <ReportFigures figures={figures} runId={run.id} />}</article>;
+  return <article className="report-document"><div className="report-meta"><span>RUN {run.id.slice(0, 8).toUpperCase()}</span><span>{run.request.start_period} — {run.request.end_period}</span></div>{report.markdown.trim() ? <InlineReportMarkdown markdown={report.markdown} figures={figures} runId={run.id} /> : <StructuredReport report={report} figures={figures} runId={run.id} />}</article>;
 }
 
 function resolveReportFigures(report: ReportDraft, visualization: VisualizationResult | null): ChartArtifact[] {
@@ -353,12 +353,52 @@ function resolveReportFigures(report: ReportDraft, visualization: VisualizationR
   return (report.visualization_ids ?? []).map((chartId) => byId.get(chartId)).filter((chart): chart is ChartArtifact => Boolean(chart));
 }
 
-function ReportFigures({ figures, runId }: { figures: ChartArtifact[]; runId?: string }) {
-  return <section className="report-figures" aria-labelledby="report-figures-heading"><h2 id="report-figures-heading">Figures</h2><p className="report-figures-intro">아래 차트는 보고서의 핵심 특이점을 뒷받침하는 결정론적 통계 시각화입니다.</p><div className="report-figure-grid">{figures.map((figure, index) => <figure className="report-figure" key={figure.chart_id}><img src={chartImageSource(runId, figure)} alt={`Figure ${index + 1}. ${figure.title}`} /><figcaption><strong>Figure {index + 1}. {figure.title}</strong><span>{figure.caption || figure.description}</span><small className="source-note">{figure.source_note}</small>{figure.anomaly_ids.length > 0 && <small>{figure.anomaly_ids.map((anomalyId) => <em key={anomalyId}>{anomalyId}</em>)}</small>}</figcaption></figure>)}</div></section>;
+function InlineReportMarkdown({ markdown, figures, runId }: { markdown: string; figures: ChartArtifact[]; runId?: string }) {
+  const figureById = new Map(figures.map((figure) => [figure.chart_id, figure]));
+  const placed = new Set<string>();
+  const markerPattern = /<!--\s*chart:([A-Za-z0-9_-]+)\s*-->/g;
+  const parts: Array<{ text?: string; chartId?: string }> = [];
+  let cursor = 0;
+  let match: RegExpExecArray | null;
+
+  while ((match = markerPattern.exec(markdown)) !== null) {
+    if (match.index > cursor) parts.push({ text: markdown.slice(cursor, match.index) });
+    parts.push({ chartId: match[1] });
+    cursor = match.index + match[0].length;
+  }
+  if (cursor < markdown.length) parts.push({ text: markdown.slice(cursor) });
+
+  const hasMarkers = parts.some((part) => part.chartId);
+  if (!hasMarkers) return <LegacyInlineReport markdown={markdown} figures={figures} runId={runId} />;
+
+  return <div className="markdown-content inline-report-content">{parts.map((part, index) => {
+    if (part.chartId) {
+      const figure = figureById.get(part.chartId);
+      if (!figure || placed.has(part.chartId)) return null;
+      placed.add(part.chartId);
+      return <ReportFigure key={`${part.chartId}-${index}`} figure={figure} number={figures.findIndex((item) => item.chart_id === part.chartId) + 1} runId={runId} />;
+    }
+    return part.text?.trim() ? <ReactMarkdown key={`markdown-${index}`} remarkPlugins={[remarkGfm]}>{part.text}</ReactMarkdown> : null;
+  })}</div>;
 }
 
-function StructuredReport({ report }: { report: ReportDraft }) {
-  return <><h2>{report.title}</h2><p className="executive-summary">{report.executive_summary}</p>{report.sections.map((section) => <section key={section.heading}><h3>{section.heading}</h3><p>{section.content}</p></section>)}<section><h3>결론</h3><p>{report.conclusion}</p></section>{report.limitations.length > 0 && <section className="limitations"><h3>해석의 한계</h3><ul>{report.limitations.map((item) => <li key={item}>{item}</li>)}</ul></section>}<footer className="references"><h3>References</h3>{report.references.length ? <ol>{report.references.map((reference) => <li key={reference}>{reference}</li>)}</ol> : <p>보고서에 포함된 근거를 검토하세요.</p>}</footer></>;
+function LegacyInlineReport({ markdown, figures, runId }: { markdown: string; figures: ChartArtifact[]; runId?: string }) {
+  const placed = new Set<string>();
+  const blocks = markdown.split(/(\n\s*\n)/);
+  return <div className="markdown-content inline-report-content">{blocks.map((block, blockIndex) => {
+    if (!block.trim()) return block;
+    const newlyReferenced = figures.filter((figure, figureIndex) => !placed.has(figure.chart_id) && new RegExp(`(?:그림|Figure)\\s*${figureIndex + 1}(?!\\d)`, "i").test(block));
+    newlyReferenced.forEach((figure) => placed.add(figure.chart_id));
+    return <section className="legacy-report-block" key={`legacy-${blockIndex}`}><ReactMarkdown remarkPlugins={[remarkGfm]}>{block}</ReactMarkdown>{newlyReferenced.map((figure) => <ReportFigure key={figure.chart_id} figure={figure} number={figures.indexOf(figure) + 1} runId={runId} />)}</section>;
+  })}{figures.filter((figure) => !placed.has(figure.chart_id)).map((figure) => <ReportFigure key={`unreferenced-${figure.chart_id}`} figure={figure} number={figures.indexOf(figure) + 1} runId={runId} />)}</div>;
+}
+
+function ReportFigure({ figure, number, runId }: { figure: ChartArtifact; number: number; runId?: string }) {
+  return <figure className="report-figure"><img src={chartImageSource(runId, figure)} alt={`Figure ${number}. ${figure.title}`} /><figcaption><strong>Figure {number}. {figure.title}</strong><span>{figure.caption || figure.description}</span><small className="source-note">{figure.source_note}</small>{figure.anomaly_ids.length > 0 && <small>{figure.anomaly_ids.map((anomalyId) => <em key={anomalyId}>{anomalyId}</em>)}</small>}</figcaption></figure>;
+}
+
+function StructuredReport({ report, figures, runId }: { report: ReportDraft; figures: ChartArtifact[]; runId?: string }) {
+  return <><h2>{report.title}</h2><p className="executive-summary">{report.executive_summary}</p>{report.sections.map((section, index) => <section key={section.heading}><h3>{section.heading}</h3><p>{section.content}</p>{figures[index] && <ReportFigure figure={figures[index]} number={index + 1} runId={runId} />}</section>)}<section><h3>결론</h3><p>{report.conclusion}</p></section>{report.limitations.length > 0 && <section className="limitations"><h3>해석의 한계</h3><ul>{report.limitations.map((item) => <li key={item}>{item}</li>)}</ul></section>}<footer className="references"><h3>References</h3>{report.references.length ? <ol>{report.references.map((reference) => <li key={reference}>{reference}</li>)}</ol> : <p>보고서에 포함된 근거를 검토하세요.</p>}</footer></>;
 }
 
 function StageInspector({ stage, output, run, onClose }: { stage: Stage; output: unknown; run: RunDetail | null; onClose: () => void }) {
