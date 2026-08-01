@@ -22,8 +22,10 @@ export default function App() {
 
   async function run(event: FormEvent) {
     event.preventDefault(); setLoading(true); setEvents([]); setReport(null); setError("");
+    const rawWindow = window.open(rawStreamUrl(), "agent24-raw-stream", "popup,width=1440,height=900");
     try {
       const accepted = await createRun(request); setRunId(accepted.id);
+      rawWindow?.postMessage({ type: "agent24-run", runId: accepted.id, apiBase: API_BASE }, window.location.origin);
       await streamEvents(accepted.id, item => setEvents(current => [...current.slice(-79), item]));
       setReport(await getReport(accepted.id));
     } catch (caught) { setError(caught instanceof Error ? caught.message : "실행에 실패했습니다."); }
@@ -31,7 +33,7 @@ export default function App() {
   }
 
   return <main className="app-shell">
-    <header className="topbar"><div className="brand"><span className="brand-mark">24</span>AGENT:24</div><p>TRADE INTELLIGENCE / EVIDENCE CONSOLE</p><span className={`system-state ${loading ? "live" : ""}`}>{loading ? "LIVE RUN" : "SYSTEM READY"}</span></header>
+    <header className="topbar"><div className="brand"><span className="brand-mark">24</span>AGENT:24</div><p>TRADE INTELLIGENCE / EVIDENCE CONSOLE</p><a className="raw-stream-link" href={rawStreamUrl(runId || undefined)} target="agent24-raw-stream">RAW API STREAM ↗</a><span className={`system-state ${loading ? "live" : ""}`}>{loading ? "LIVE RUN" : "SYSTEM READY"}</span></header>
     <section className="hero"><div><p className="eyebrow">MULTI-AGENT CUSTOMS BRIEFING</p><h1>수치에서 근거까지,<br/><em>검증되는 무역 보고서.</em></h1></div><p>관세청 원자료를 코드로 집계하고 Liner가 외부 근거와 시각화를 보강합니다. 보고서와 논문을 같은 데이터 계보에서 만듭니다.</p></section>
     <section className="workspace">
       <aside className="control-rail"><form onSubmit={run}>
@@ -66,6 +68,7 @@ export default function App() {
 }
 
 function Heading({no,title}:{no:string;title:string}) { return <div className="form-heading"><span>{no}</span><h2>{title}</h2></div> }
+function rawStreamUrl(runId?: string): string { const url=new URL("/console.html",window.location.origin);url.searchParams.set("api",API_BASE);if(runId)url.searchParams.set("run",runId);return url.toString(); }
 function shiftMonth(period:string|undefined,delta:number):string|undefined { if(!period)return undefined;const [year,month]=period.split("-").map(Number);const date=new Date(Date.UTC(year,month-1+delta,1));return `${date.getUTCFullYear()}-${String(date.getUTCMonth()+1).padStart(2,"0")}`; }
 function ScopeSelect({label,values,options,onChange}:{label:string;values:string[];options:Array<{value:string;label:string}>;onChange:(values:string[])=>void}) {
   const selectedLabels=values[0]==="__all__"?["전체 데이터"]:values.map(value=>options.find(option=>option.value===value)?.label??value);
