@@ -2,6 +2,10 @@ import type { ResearchDataAvailability, ResearchRequest, RunDetail, RunSummary, 
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? "http://127.0.0.1:8000/api/v1";
 
+export function getChartImageUrl(runId: string, chartId: string): string {
+  return `${API_BASE_URL}/research/${encodeURIComponent(runId)}/charts/${encodeURIComponent(chartId)}/image`;
+}
+
 export async function listRuns(): Promise<RunSummary[]> {
   const response = await fetch(`${API_BASE_URL}/research`);
   if (!response.ok) throw new Error("저장된 리서치 목록을 불러오지 못했습니다.");

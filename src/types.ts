@@ -8,6 +8,8 @@ export interface ResearchRequest {
   start_period: string;
   end_period: string;
   title?: string;
+  additional_prompt?: string;
+  word_count?: number;
 }
 
 export interface ResearchDataAvailability {
@@ -52,8 +54,41 @@ export interface ReportDraft {
   conclusion: string;
   limitations: string[];
   claims: Array<{ claim_id: string; text: string; trade_evidence_ids: string[]; web_evidence_ids: string[]; scholar_evidence_ids: string[] }>;
+  visualization_ids?: string[];
   references: string[];
   markdown: string;
+}
+
+export interface ChartArtifact {
+  chart_id: string;
+  template_id: string;
+  title: string;
+  caption: string;
+  source_note: string;
+  renderer: "matplotlib" | "liner_viz";
+  category: "overview" | "anomaly" | "structure" | "competitiveness" | "decomposition" | "data_quality";
+  file_path?: string | null;
+  html?: string | null;
+  image_data_url?: string | null;
+  chart_type?: string | null;
+  effective_template_id: string;
+  fallback_used: boolean;
+  anomaly_ids: string[];
+  metric_ids: string[];
+  key_observations: string[];
+  limitations: string[];
+  observation_count: number;
+  band_observation_count: number;
+  description: string;
+}
+
+export interface VisualizationResult {
+  html: string;
+  theme: string;
+  description: string;
+  provider: string;
+  visualization_id?: string;
+  chart_artifacts?: ChartArtifact[];
 }
 
 export interface ResearchResult {
@@ -61,7 +96,7 @@ export interface ResearchResult {
   data_check: Record<string, unknown> | null;
   trade_analysis: Record<string, unknown>;
   anomaly_points: Record<string, unknown>[];
-  visualization: { html: string; theme: string; description: string; provider: string } | null;
+  visualization: VisualizationResult | null;
   report_plan: Record<string, unknown> | null;
   news_analysis: Record<string, unknown>;
   rca_analysis: Record<string, unknown> | null;

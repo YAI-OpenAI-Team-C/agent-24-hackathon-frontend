@@ -1,0 +1,21 @@
+textarea {
+  width: 100%;
+  min-height: 96px;
+  resize: vertical;
+  border: 0;
+  border-bottom: 1px solid rgba(181, 218, 199, 0.32);
+  padding: 7px 0;
+  color: var(--ink);
+  background: transparent;
+  font: 600 13px/1.55 var(--sans);
+}
+
+textarea:focus {
+  border-color: var(--green);
+}
+
+.prompt-field small {
+  font: 9px/1.45 var(--mono);
+  letter-spacing: 0;
+  color: #637770;
+}
