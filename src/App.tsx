@@ -1,331 +1,70 @@
-import { FormEvent, useEffect, useMemo, useState } from "react";
-import ReactMarkdown from "react-markdown";
-import remarkGfm from "remark-gfm";
-import { checkResearchAvailability, getRun, listRuns, streamResearch } from "./api";
-import type { ReportDraft, ResearchRequest, RunDetail, RunSummary, Stage, TimelineEvent } from "./types";
+import { FormEvent, useMemo, useState } from "react";
+import { API_BASE, createRun, getReport, pdfUrl, streamEvents } from "./api";
+import type { AgentKey, Metric, MonthMetric, OutputType, Report, RunRequest, TimelineEvent } from "./types";
 
-const stageMeta: Record<Stage, { label: string; detail: string; index: number }> = {
-  manager: { label: "Research Manager", detail: "고정된 연구 흐름을 제어합니다.", index: 0 },
-  data: { label: "Data Check", detail: "자료 범위·시트·지원 가능 여부를 검사합니다.", index: 0 },
-  trade: { label: "Trade Analysis", detail: "분석 질문, 데이터 변화, 특이점을 도출합니다.", index: 1 },
-  visualization: { label: "Anomaly Visualization", detail: "상위 20개 이상점을 Liner Viz로 시각화합니다.", index: 2 },
-  planner: { label: "Report Planning", detail: "핵심 이상점과 보고서 구성을 결정합니다.", index: 3 },
-  news: { label: "News & Policy", detail: "선택된 특이점의 뉴스·정책 근거를 조사합니다.", index: 4 },
-  rca: { label: "RCA Analysis", detail: "비교우위·원인·경제적 영향을 분석합니다.", index: 5 },
-  writer: { label: "Report Writer", detail: "근거를 구조화된 보고서로 작성합니다.", index: 6 },
-  qa: { label: "Final QA", detail: "수치·출처·논리·구조를 점검합니다.", index: 7 },
-  completed: { label: "Complete", detail: "최종 보고서가 준비됐습니다.", index: 8 },
-  error: { label: "Pipeline error", detail: "실행이 중단됐습니다.", index: 8 },
-};
-
-const initialRequest: ResearchRequest = {
-  countries: ["중국"],
-  products: ["반도체"],
-  unit: "USD",
-  length: 1200,
-  start_period: "2025-04",
-  end_period: "2025-06",
-};
-
-const countryOptions = ["중국", "미국", "아세안", "EU", "일본", "독일", "인도", "중동", "중남미", "CIS"];
-const productOptions = [
-  "반도체", "컴퓨터", "디스플레이", "무선통신기기", "자동차", "자동차부품", "선박",
-  "석유제품", "석유화학", "이차전지", "일반기계", "철강", "비철금속", "전기기기",
-  "바이오헬스", "화장품", "농수산식품", "섬유", "가전", "생활용품",
+const AGENTS: { key: AgentKey; name: string; role: string }[] = [
+  { key: "terra", name: "TERRA", role: "계획·판정" }, { key: "code", name: "CODE", role: "집계·조립" },
+  { key: "luna", name: "LUNA", role: "초안·대질" }, { key: "sol", name: "SOL", role: "검증·해석" },
+  { key: "liner", name: "LINER", role: "근거·시각화" },
 ];
+const initial: RunRequest = { input: "2026년 6월 수출 동향 브리핑을 작성해줘. 반도체 중심으로.", mode: "fast", output_type: "report" };
 
-function App() {
-  const [request, setRequest] = useState(initialRequest);
-  const [events, setEvents] = useState<TimelineEvent[]>([]);
-  const [selectedRun, setSelectedRun] = useState<RunDetail | null>(null);
-  const [runs, setRuns] = useState<RunSummary[]>([]);
-  const [inspectedStage, setInspectedStage] = useState<Stage | null>(null);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [noDataMessage, setNoDataMessage] = useState<string | null>(null);
+export default function App() {
+  const [request, setRequest] = useState(initial); const [events, setEvents] = useState<TimelineEvent[]>([]);
+  const [report, setReport] = useState<Report | null>(null); const [runId, setRunId] = useState("");
+  const [loading, setLoading] = useState(false); const [error, setError] = useState("");
+  const activeAgent = events.at(-1)?.agent; const lastEvent = events.at(-1);
+  const completedStages = useMemo(() => new Set(events.map(event => event.stage.split(".")[0])), [events]);
 
-  useEffect(() => {
-    listRuns().then(setRuns).catch(() => undefined);
-  }, []);
-
-  const activeStage = useMemo<Stage>(() => {
-    const last = events.at(-1);
-    if (last?.stage) return last.stage;
-    if (selectedRun?.status === "completed") return "completed";
-    return "manager";
-  }, [events, selectedRun]);
-
-  async function startResearch(event: FormEvent) {
-    event.preventDefault();
-    if (!request.countries.length || !request.products.length) {
-      setError("최소 한 개의 국가와 품목을 선택하거나 입력하세요.");
-      return;
-    }
-    if (request.start_period > request.end_period) {
-      setError("종료 월은 시작 월보다 빠를 수 없습니다.");
-      return;
-    }
-    setError(null);
+  async function run(event: FormEvent) {
+    event.preventDefault(); setLoading(true); setEvents([]); setReport(null); setError("");
     try {
-      const availability = await checkResearchAvailability(request);
-      if (!availability.available) {
-        setNoDataMessage(availability.message);
-        return;
-      }
-    } catch (caught) {
-      setError(caught instanceof Error ? caught.message : "데이터 확인 중 오류가 발생했습니다.");
-      return;
-    }
-    setLoading(true);
-    setEvents([]);
-    setSelectedRun(null);
-    setInspectedStage(null);
-    let runId = "";
-
-    try {
-      await streamResearch(request, (timelineEvent) => {
-        runId ||= timelineEvent.runId;
-        setEvents((current) => [...current, timelineEvent]);
-      });
-      const detail = await getRun(runId);
-      setSelectedRun(detail);
-      setRuns((current) => [detail, ...current.filter((run) => run.id !== detail.id)]);
-      if (detail.status !== "completed" || !detail.result) {
-        const message = detail.error_message ?? "리서치가 완료되기 전에 중단되어 보고서를 만들지 못했습니다.";
-        setError(message);
-        if (isDataUnavailable(message)) setNoDataMessage(message);
-      }
-    } catch (caught) {
-      setError(caught instanceof Error ? caught.message : "알 수 없는 오류가 발생했습니다.");
-    } finally {
-      setLoading(false);
-    }
+      const accepted = await createRun(request); setRunId(accepted.id);
+      await streamEvents(accepted.id, item => setEvents(current => [...current.slice(-79), item]));
+      setReport(await getReport(accepted.id));
+    } catch (caught) { setError(caught instanceof Error ? caught.message : "실행에 실패했습니다."); }
+    finally { setLoading(false); }
   }
 
-  async function selectRun(runId: string) {
-    try {
-      setError(null);
-      const detail = await getRun(runId);
-      setSelectedRun(detail);
-      if (detail.status !== "completed" || !detail.result) {
-        setError(detail.error_message ?? "이 실행에는 생성된 보고서가 없습니다.");
-      }
-      setEvents([]);
-      setInspectedStage(null);
-    } catch (caught) {
-      setError(caught instanceof Error ? caught.message : "보고서를 불러오지 못했습니다.");
-    }
-  }
-
-  return (
-    <main className="app-shell">
-      <a className="skip-link" href="#report">보고서로 건너뛰기</a>
-      <header className="topbar">
-        <div className="brand"><span className="brand-mark">24</span><span>AGENT:24</span></div>
-        <p>TRADE INTELLIGENCE / RESEARCH CONSOLE</p>
-        <span className={`system-state ${loading ? "live" : ""}`}>{loading ? "LIVE RUN" : "SYSTEM READY"}</span>
-      </header>
-      {noDataMessage && <NoDataModal message={noDataMessage} onClose={() => setNoDataMessage(null)} />}
-
-      <section className="hero">
-        <div>
-          <p className="eyebrow">MULTI-AGENT RESEARCH</p>
-          <h1>무역의 변화가<br /><em>어디에서 시작됐는지.</em></h1>
-        </div>
-        <p className="hero-copy">데이터 특이점부터 뉴스, RCA 분석, 검증된 보고서까지. 각 단계의 공개 작업 로그와 산출물을 한 화면에서 확인합니다.</p>
+  return <main className="app-shell">
+    <header className="topbar"><div className="brand"><span className="brand-mark">24</span>AGENT:24</div><p>TRADE INTELLIGENCE / EVIDENCE CONSOLE</p><span className={`system-state ${loading ? "live" : ""}`}>{loading ? "LIVE RUN" : "SYSTEM READY"}</span></header>
+    <section className="hero"><div><p className="eyebrow">MULTI-AGENT CUSTOMS BRIEFING</p><h1>수치에서 근거까지,<br/><em>검증되는 무역 보고서.</em></h1></div><p>관세청 원자료를 코드로 집계하고 Liner가 외부 근거와 시각화를 보강합니다. 보고서와 논문을 같은 데이터 계보에서 만듭니다.</p></section>
+    <section className="workspace">
+      <aside className="control-rail"><form onSubmit={run}>
+        <Heading no="01" title="Research brief"/><label>요청<textarea value={request.input} onChange={e=>setRequest({...request,input:e.target.value})}/></label>
+        <label>출력 유형<select value={request.output_type} onChange={e=>setRequest({...request,output_type:e.target.value as OutputType})}><option value="report">정책 보고서 · 국문 브리프</option><option value="paper">학술 논문 · 영문 APA</option></select></label>
+        <label>실행 파이프라인<select value={request.mode} onChange={e=>setRequest({...request,mode:e.target.value as RunRequest["mode"]})}><option value="fast">fast · 2분 시연 병렬</option><option value="live">live · 축소 검증</option><option value="full">full · 정식 검증</option></select></label>
+        <button className="run-button" disabled={loading}>{loading ? "AGENTS WORKING…" : "START BRIEFING"}<span>↗</span></button>
+      </form><div className="run-meta"><Heading no="02" title="Run access"/><p>{runId ? `RUN ${runId}` : "실행 후 결과와 PDF 링크가 열립니다."}</p>{runId && <><a href={`${API_BASE}/runs/${runId}/report`} target="_blank">JSON RESULT ↗</a><a href={pdfUrl(runId)} target="_blank">{request.output_type === "paper" ? "PAPER" : "REPORT"} PDF ↗</a></>}</div></aside>
+      <section className="analysis-panel"><div className="panel-heading"><div><span>LIVE EXECUTION</span><h2>Agent collaboration</h2></div><b>{events.length} EVENTS</b></div>
+        <div className="agent-grid">{AGENTS.map(agent=><div key={agent.key} className={`agent ${activeAgent===agent.key?"active":""}`}><strong>{agent.name}</strong><small>{agent.role}</small></div>)}</div>
+        <div className="signal">{lastEvent ? `${lastEvent.agent.toUpperCase()} · ${lastEvent.name}` : "협업 신호 대기 중"}</div>
+        <div className="timeline">{events.slice(-12).reverse().map(event=><div className="event" key={event.id}><span>{event.id}</span><b>{event.stage}</b><p>{event.name.replace("pipeline.","")}</p></div>)}</div>
+        {!events.length && <div className="empty-dark">TERRA가 계획을 세우면 실시간 협업 과정이 여기에 나타납니다.</div>}
+        <p className="process-note">공개 이벤트와 도구 호출 상태만 표시하며 비공개 내부 추론은 노출하지 않습니다.</p>
       </section>
-
-      <section className="workspace">
-        <aside className="control-rail">
-          <form onSubmit={startResearch} className="research-form">
-            <div className="form-heading"><span>01</span><h2>Research brief</h2></div>
-            <MultiSelectInput id="countries" label="국가·지역" values={request.countries} options={countryOptions} placeholder="선택하거나 직접 입력" onChange={(countries) => setRequest({ ...request, countries })} />
-            <MultiSelectInput id="products" label="품목" values={request.products} options={productOptions} placeholder="선택하거나 직접 입력" onChange={(products) => setRequest({ ...request, products })} />
-            <div className="two-up">
-              <label>표시 단위<select value={request.unit} onChange={(event) => setRequest({ ...request, unit: event.target.value })}><option value="USD">USD</option><option value="KRW">KRW</option><option value="thousand USD">천 USD</option></select></label>
-              <label>분량<input type="number" min="300" max="5000" value={request.length} onChange={(event) => setRequest({ ...request, length: Number(event.target.value) })} /></label>
-            </div>
-            <div className="date-range" role="group" aria-label="분석 기간">
-              <span>분석 기간</span>
-              <div className="two-up">
-                <label>시작 월<input className="calendar-input" type="month" value={request.start_period} max={request.end_period} onChange={(event) => setRequest({ ...request, start_period: event.target.value })} /></label>
-                <label>종료 월<input className="calendar-input" type="month" value={request.end_period} min={request.start_period} onChange={(event) => setRequest({ ...request, end_period: event.target.value })} /></label>
-              </div>
-            </div>
-            <button className="run-button" disabled={loading} type="submit">{loading ? "ANALYZING…" : "START RESEARCH"}<span>↗</span></button>
-          </form>
-
-          <div className="run-history">
-            <div className="form-heading"><span>02</span><h2>Saved runs</h2></div>
-            {runs.length === 0 ? <p className="empty-note">저장된 실행이 없습니다.</p> : runs.slice(0, 5).map((run) => (
-              <button key={run.id} className={`run-item ${selectedRun?.id === run.id ? "selected" : ""}`} onClick={() => selectRun(run.id)}>
-                <span className={`dot ${run.status}`} />
-                <span>{run.current_stage ?? "completed"}<small>{formatDate(run.created_at)}</small></span><span>›</span>
-              </button>
-            ))}
-          </div>
-        </aside>
-
-        <section className="analysis-panel" aria-live="polite">
-          <div className="panel-heading"><div><span className="section-kicker">LIVE EXECUTION</span><h2>Generation timeline</h2></div><span className="step-count">{Math.min(stageMeta[activeStage].index + 1, 8)} / 8</span></div>
-          <div className="timeline">
-            {(["data", "trade", "visualization", "planner", "news", "rca", "writer", "qa"] as Stage[]).map((stage) => {
-              const stageEvents = events.filter((item) => item.stage === stage);
-              const isCurrent = stage === activeStage;
-              const isComplete = stageEvents.some((item) => item.event === "stage_completed") || stageMeta[activeStage].index > stageMeta[stage].index;
-              return <button type="button" aria-pressed={inspectedStage === stage} className={`timeline-item ${isCurrent ? "current" : ""} ${isComplete ? "complete" : ""} ${inspectedStage === stage ? "inspected" : ""}`} key={stage} onClick={() => setInspectedStage(stage)}>
-                <div className="timeline-pin"><span /></div>
-                <div className="timeline-content"><div className="timeline-title"><span>{String(stageMeta[stage].index).padStart(2, "0")}</span><h3>{stageMeta[stage].label}</h3><b>{isCurrent ? "RUNNING" : isComplete ? "DONE" : "QUEUED"}</b></div><p>{latestMessage(stageEvents) ?? stageMeta[stage].detail}</p>{stageEvents.at(-1)?.payload && <PayloadSummary payload={stageEvents.at(-1)?.payload} />}</div>
-              </button>;
-            })}
-          </div>
-          {inspectedStage && <StageInspector stage={inspectedStage} output={getStageOutput(inspectedStage, events, selectedRun)} onClose={() => setInspectedStage(null)} />}
-          {error && <div className="error-box">{error}</div>}
-          <p className="process-note">작업 로그는 Agent가 반환한 단계 상태와 근거 요약입니다. 비공개 내부 추론은 표시하지 않습니다.</p>
-        </section>
-
-        <section id="report" className="report-panel">
-          <div className="panel-heading"><div><span className="section-kicker">FINAL OUTPUT</span><h2>Research report</h2></div>{selectedRun?.result && <button className="print-button" onClick={() => window.print()}>PRINT ↗</button>}</div>
-          {selectedRun?.result ? <ReportView run={selectedRun} /> : <ReportEmpty loading={loading} />}
-        </section>
+      <section className="report-panel" id="report"><div className="panel-heading"><div><span>FINAL OUTPUT</span><h2>{request.output_type === "paper" ? "Research paper" : "Trade briefing"}</h2></div>{report&&<a className="print-button" href={pdfUrl(runId)} target="_blank">PDF ↗</a>}</div>
+        {report ? <ReportView report={report}/> : <div className="report-empty"><div className={`empty-orbit ${loading?"spinning":""}`}><span/></div><h3>{loading?"근거를 조립하고 있습니다":"아직 결과가 없습니다"}</h3><p>{loading?"왼쪽 협업 신호에서 현재 담당 에이전트를 확인하세요.":"요청과 파이프라인을 고른 뒤 브리핑을 시작하세요."}</p></div>}
+        {error&&<div className="error-box">{error}</div>}
       </section>
-    </main>
-  );
-}
-
-function NoDataModal({ message, onClose }: { message: string; onClose: () => void }) {
-  return <div className="modal-backdrop" role="presentation" onMouseDown={onClose}>
-    <section className="data-modal" role="dialog" aria-modal="true" aria-labelledby="data-modal-title" onMouseDown={(event) => event.stopPropagation()}>
-      <span className="section-kicker">STEP 0 · DATA CHECK</span>
-      <h2 id="data-modal-title">선택한 범위에<br />사용 가능한 데이터가 없습니다.</h2>
-      <p>{message}</p>
-      <p className="modal-note">국가·품목·기간을 변경한 뒤 다시 확인하세요. 데이터가 없으면 에이전트 실행을 시작하지 않습니다.</p>
-      <button type="button" className="modal-button" onClick={onClose}>조건 수정하기 <span>←</span></button>
     </section>
-  </div>;
+  </main>;
 }
 
-function MultiSelectInput({
-  id,
-  label,
-  values,
-  options,
-  placeholder,
-  onChange,
-}: {
-  id: string;
-  label: string;
-  values: string[];
-  options: string[];
-  placeholder: string;
-  onChange: (values: string[]) => void;
-}) {
-  const [input, setInput] = useState("");
-
-  function addInput() {
-    const additions = splitList(input).filter((value) => !values.includes(value));
-    if (additions.length) onChange([...values, ...additions]);
-    setInput("");
-  }
-
-  return <label className="selection-field">
-    <span>{label}</span>
-    <div className="selection-control">
-      {values.map((value) => <span className="selection-chip" key={value}>{value}<button type="button" onClick={() => onChange(values.filter((item) => item !== value))} aria-label={`${value} 제거`}>×</button></span>)}
-      <input aria-label={`${label} 선택 또는 입력`} list={`${id}-options`} value={input} placeholder={placeholder} onChange={(event) => setInput(event.target.value)} onBlur={addInput} onKeyDown={(event) => { if (event.key === "Enter" || event.key === ",") { event.preventDefault(); addInput(); } }} />
-    </div>
-    <datalist id={`${id}-options`}>{options.filter((option) => !values.includes(option)).map((option) => <option value={option} key={option} />)}</datalist>
-    <small>목록에서 선택하거나 입력 후 Enter</small>
-  </label>;
+function Heading({no,title}:{no:string;title:string}) { return <div className="form-heading"><span>{no}</span><h2>{title}</h2></div> }
+function ReportView({report}:{report:Report}) {
+  const ts=report.timeseries??{}, latest=ts.monthly_series?.at(-1), top=ts.items?.[0], evidence=report.evidence_audit??{}, audit=report.audit??{};
+  return <article className="report-document"><div className="report-meta"><span>CONFIDENCE {report.confidence_level}</span><span>{report.period}</span></div><h2>{report.headline}</h2>
+    <div className="kpis"><Kpi value={money(latest?.value_usd)} label="당월 수출액" sub={`전월비 ${pct(latest?.mom_pct)}`}/><Kpi value={pct(latest?.yoy_pct)} label="전년동월비"/><Kpi value={top?.share==null?"n/a":`${(top.share*100).toFixed(1)}%`} label="1위 품목 비중" sub={top?.label}/><Kpi value={`${evidence.coverage_pct??0}%`} label="근거 커버리지" sub={`고유 출처 ${evidence.unique_sources??0}개`}/></div>
+    <div className="viz-grid"><div className="viz-card"><h3>월별 수출 추이</h3><Trend rows={ts.monthly_series??[]}/></div><div className="viz-card"><h3>무엇이 움직였나</h3><Composition rows={ts.items??[]}/></div></div>
+    <p className="provenance"><b>데이터 계보</b> · {report.data_provenance?.source??"관세청 무역통계"} · {report.data_provenance?.records??audit.input_records??0}건 · {report.data_provenance?.transform??"원자료 코드 집계"}</p>
+    {report.sections?.map(section=><section key={section.heading}><h3>{section.heading}</h3>{section.sentences.map((sentence,index)=><div className="sentence" key={index}><span className={`badge ${sentence.status}`}>{sentence.status}</span><div><p>{sentence.text}</p>{sentence.evidence?.map((item,i)=><a className="evidence" key={i} href={item.url} target="_blank" rel="noreferrer">{item.title}{item.year?` (${item.year})`:""}<small>{item.quote}</small></a>)}</div></div>)}</section>)}
+    <EvidenceChain report={report}/>{report.charts?.length>0&&<section><h3>Liner visualizations</h3><div className="charts">{report.charts.map((chart,index)=><div className="chart" key={index}><h4>{chart.title}<span>{chart.ok?"LINER VIZ":"FALLBACK"}</span></h4>{chart.ok&&chart.html?<iframe title={chart.title} sandbox="allow-scripts" srcDoc={chart.html}/>:<Composition rows={chart.fallback_rows??[]}/>}</div>)}</div></section>}
+    {((report.anomaly_warnings?.length??0)+(report.revision_watch?.length??0)>0)&&<section className="warnings"><h3>사람이 확인할 지점</h3>{[...(report.anomaly_warnings??[]),...(report.revision_watch??[])].slice(0,6).map((item,i)=><pre key={i}>{JSON.stringify(item,null,2)}</pre>)}</section>}
+  </article>
 }
-
-function ReportView({ run }: { run: RunDetail }) {
-  const report = run.result!.report;
-  return <article className="report-document"><div className="report-meta"><span>RUN {run.id.slice(0, 8).toUpperCase()}</span><span>{run.request.start_period} — {run.request.end_period}</span></div>{report.markdown.trim() ? <div className="markdown-content"><ReactMarkdown remarkPlugins={[remarkGfm]}>{report.markdown}</ReactMarkdown></div> : <StructuredReport report={report} />}</article>;
-}
-
-function StructuredReport({ report }: { report: ReportDraft }) {
-  return <><h2>{report.title}</h2><p className="executive-summary">{report.executive_summary}</p>{report.sections.map((section) => <section key={section.heading}><h3>{section.heading}</h3><p>{section.content}</p></section>)}<section><h3>결론</h3><p>{report.conclusion}</p></section>{report.limitations.length > 0 && <section className="limitations"><h3>해석의 한계</h3><ul>{report.limitations.map((item) => <li key={item}>{item}</li>)}</ul></section>}<footer className="references"><h3>References</h3>{report.references.length ? <ol>{report.references.map((reference) => <li key={reference}>{reference}</li>)}</ol> : <p>보고서에 포함된 근거를 검토하세요.</p>}</footer></>;
-}
-
-function StageInspector({ stage, output, onClose }: { stage: Stage; output: unknown; onClose: () => void }) {
-  const visualization = stage === "visualization" && isRecord(output) && typeof output.html === "string" ? output : null;
-  return <section className="stage-inspector" aria-label={`${stageMeta[stage].label} 전체 출력`}><div><span className="section-kicker">FULL STRUCTURED OUTPUT</span><h3>{stageMeta[stage].label}</h3></div><button type="button" className="close-inspector" onClick={onClose} aria-label="전체 출력 닫기">×</button>{visualization && <iframe className="visualization-frame" sandbox="allow-scripts" srcDoc={visualization.html as string} title="Trade anomaly visualization" />}{output ? <OutputTree value={output} /> : <p>이 단계의 출력은 아직 준비되지 않았습니다. 완료된 단계 또는 저장된 실행을 선택하세요.</p>}</section>;
-}
-
-function OutputTree({ value }: { value: unknown }) {
-  return <div className="output-tree"><JsonNode label="Agent output" value={value} depth={0} /></div>;
-}
-
-function JsonNode({ label, value, depth }: { label: string; value: unknown; depth: number }) {
-  if (Array.isArray(value)) {
-    return <details className="tree-branch" open={depth < 1}><summary><span>{humanize(label)}</span><b>LIST · {value.length}</b></summary><div className="tree-children">{value.length ? value.map((item, index) => <JsonNode key={index} label={`Item ${index + 1}`} value={item} depth={depth + 1} />) : <span className="tree-empty">비어 있음</span>}</div></details>;
-  }
-  if (isRecord(value)) {
-    const entries = Object.entries(value);
-    return <details className="tree-branch" open={depth < 1}><summary><span>{humanize(label)}</span><b>OBJECT · {entries.length}</b></summary><div className="tree-children">{entries.map(([key, item]) => <JsonNode key={key} label={key} value={item} depth={depth + 1} />)}</div></details>;
-  }
-  const text = formatPrimitive(value);
-  return <div className={`tree-leaf ${text.length > 110 ? "long" : ""}`}><span>{humanize(label)}</span><p>{text}</p></div>;
-}
-
-function ReportEmpty({ loading }: { loading: boolean }) {
-  return <div className="report-empty"><div className={`empty-orbit ${loading ? "spinning" : ""}`}><span /></div><h3>{loading ? "보고서를 조립하고 있습니다" : "아직 보고서가 없습니다"}</h3><p>{loading ? "실시간 타임라인에서 현재 단계를 확인하세요." : "왼쪽에서 분석 범위를 설정하고 리서치를 시작하세요."}</p></div>;
-}
-
-function PayloadSummary({ payload }: { payload?: Record<string, unknown> }) {
-  if (!payload) return null;
-  const keys = Object.keys(payload).filter((key) => !["data_points", "markdown"].includes(key)).slice(0, 3);
-  if (!keys.length) return null;
-  return <div className="payload-summary">{keys.map((key) => <span key={key}>{key.replaceAll("_", " ")}</span>)}</div>;
-}
-
-function latestMessage(events: TimelineEvent[]): string | undefined {
-  return events.at(-1)?.message;
-}
-
-function getStageOutput(stage: Stage, events: TimelineEvent[], run: RunDetail | null): unknown {
-  const liveOutput = events.slice().reverse().find((event) => event.stage === stage && event.payload)?.payload;
-  if (liveOutput) return liveOutput;
-  if (!run?.result) return null;
-  const storedOutput: Partial<Record<Stage, unknown>> = {
-    data: run.result.data_check,
-    trade: run.result.trade_analysis,
-    visualization: run.result.visualization,
-    planner: run.result.report_plan,
-    news: run.result.news_analysis,
-    rca: run.result.rca_analysis,
-    writer: run.result.report,
-    qa: run.result.qa,
-  };
-  return storedOutput[stage] ?? null;
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null;
-}
-
-function formatPrimitive(value: unknown): string {
-  if (value === null) return "null";
-  if (value === undefined) return "undefined";
-  if (typeof value === "string") return value;
-  return String(value);
-}
-
-function humanize(value: string): string {
-  return value.replaceAll("_", " ").replace(/([a-z])([A-Z])/g, "$1 $2");
-}
-
-function splitList(value: string): string[] {
-  return value.split(",").map((item) => item.trim()).filter(Boolean);
-}
-
-function isDataUnavailable(message: string): boolean {
-  return message.includes("일치하는 무역 데이터가 없습니다");
-}
-
-function formatDate(value: string): string {
-  return new Intl.DateTimeFormat("ko-KR", { month: "short", day: "numeric" }).format(new Date(value));
-}
-
-export default App;
+function Kpi({value,label,sub}:{value:string;label:string;sub?:string}) { return <div className="kpi"><strong>{value}</strong><span>{label}</span><small>{sub}</small></div> }
+function Trend({rows}:{rows:MonthMetric[]}) { const values=rows.slice(-13), max=Math.max(...values.map(x=>x.value_usd),1); return <div className="bars">{values.map(row=><div key={row.period} title={`${row.period}: ${money(row.value_usd)}`} style={{height:`${Math.max(4,row.value_usd/max*100)}%`}}><span>{row.period.slice(2)}</span></div>)}</div> }
+function Composition({rows}:{rows:Metric[]}) { return <div className="composition">{rows.slice(0,6).map(row=><div key={row.label}><span>{row.label}</span><i><b style={{width:`${Math.max(2,(row.share??0)*100)}%`}}/></i><em>{row.share==null?money(row.value_usd):`${(row.share*100).toFixed(1)}%`}</em></div>)}</div> }
+function EvidenceChain({report}:{report:Report}) { const e=report.evidence_audit??{},a=report.audit??{},ledger=e.ledger??[]; return <section><h3>Evidence chain</h3><div className="proof-flow"><Kpi value={`${a.input_records??0}`} label="records"/><Kpi value={`${a.specialists?.macro_signals??0}`} label="signals"/><Kpi value={`${e.evidence_refs??0}`} label="citations"/><Kpi value={`${(a.badges?.verified??0)+(a.badges?.adjusted??0)}`} label="survived"/></div><details><summary>출처 원장 펼치기 · {ledger.length}개</summary>{ledger.map((row:any,i:number)=><a className="source" href={row.url} target="_blank" rel="noreferrer" key={i}>{row.title}<small>{(row.used_for??[]).join(" · ")}</small></a>)}</details></section> }
+const money=(n?:number)=>n==null?"n/a":`$${(n/1e9).toFixed(1)}B`; const pct=(n?:number)=>n==null?"n/a":`${n>0?"+":""}${n.toFixed(1)}%`;

@@ -1,0 +1,200 @@
+<!doctype html>
+<html lang="ko" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>RAW STREAM — 관세 브리핑 에이전트</title>
+<style>
+  :root{
+    --bg:#0B1014; --panel:#121A21; --line:#1E2A34; --line2:#162028;
+    --fg:#DCE4EA; --dim:#8494A1; --faint:#5C6B77;
+    --terra:#9B87E8; --luna:#7FA6CE; --sol:#5FB3B8; --liner:#E0805F; --code:#8A96A2;
+    --ok:#63B294; --bad:#E0705F;
+    --mono:ui-monospace,"Cascadia Mono","Cascadia Code",Consolas,"D2Coding",monospace;
+    --sans:"Pretendard Variable",Pretendard,"Segoe UI","Malgun Gothic",system-ui,sans-serif;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;height:100%}
+  body{background:var(--bg);color:var(--fg);font:12px/1.55 var(--mono);
+       -webkit-font-smoothing:antialiased;display:flex;flex-direction:column}
+
+  header{position:sticky;top:0;z-index:5;background:#0B1014EE;backdrop-filter:blur(8px);
+         border-bottom:1px solid var(--line);padding:9px 16px;display:flex;gap:18px;
+         align-items:center;flex-wrap:wrap}
+  h1{font:600 12px/1 var(--sans);letter-spacing:.18em;margin:0}
+  .stat{color:var(--faint);font-size:11px;white-space:nowrap}
+  .stat b{color:var(--fg);font-weight:600;font-variant-numeric:tabular-nums}
+  .conn{margin-left:auto;font-size:11px}
+  label.tg{display:inline-flex;gap:5px;align-items:center;color:var(--faint);
+           font-size:11px;cursor:pointer;user-select:none}
+  input[type=checkbox]{accent-color:var(--luna);margin:0}
+
+  /* 티어 레인 — 어느 모델이 일하는지가 색으로 읽힌다 */
+  .tiers{display:flex;gap:0;border-bottom:1px solid var(--line);background:var(--panel)}
+  .tier{flex:1;padding:7px 12px;border-right:1px solid var(--line2);min-width:0}
+  .tier:last-child{border-right:0}
+  .tier .n{font:600 11px/1.3 var(--sans);letter-spacing:.06em}
+  .tier .d{font-size:10px;color:var(--faint);margin-top:2px;white-space:nowrap;
+           overflow:hidden;text-overflow:ellipsis}
+  .tier .c{font-size:10px;color:var(--dim);font-variant-numeric:tabular-nums}
+  .t-terra .n{color:var(--terra)} .t-luna .n{color:var(--luna)}
+  .t-sol .n{color:var(--sol)} .t-liner .n{color:var(--liner)} .t-code .n{color:var(--code)}
+  .tier.hot{background:#1A242D}
+
+  main{flex:1;overflow-y:auto;padding:8px 16px 60px}
+  .ev{border-left:2px solid var(--c,var(--line));padding:3px 0 3px 10px;margin:1px 0}
+  .hd{display:flex;gap:9px;align-items:baseline;flex-wrap:wrap}
+  .seq{color:var(--faint);min-width:42px;text-align:right;font-variant-numeric:tabular-nums}
+  .chip{padding:0 5px;border-radius:2px;font-size:9.5px;letter-spacing:.05em;
+        background:color-mix(in srgb,var(--c,#5C6B77) 20%,transparent);color:var(--c,var(--dim))}
+  .stg{color:var(--dim);font-size:11px}
+  .lane{color:#D9A441}
+  pre{margin:3px 0 0;white-space:pre-wrap;word-break:break-all;color:var(--dim);
+      font-size:11px;max-height:16em;overflow:auto}
+  .ev.delta{padding:1px 0 1px 10px}
+  .ev.delta pre{margin:0;color:var(--faint);font-size:10.5px;max-height:1.5em;overflow:hidden}
+  .ev.note{background:#141E26}
+  .ev.note pre{color:var(--fg)}
+  .empty{color:var(--faint);padding:40px 0;text-align:center;font-size:12px}
+</style>
+</head>
+<body>
+
+<header>
+  <h1>RAW STREAM</h1>
+  <span class="stat">run <b id="run">—</b></span>
+  <span class="stat">events <b id="n">0</b></span>
+  <span class="stat">tool calls <b id="tc">0</b></span>
+  <span class="stat" id="el"></span>
+  <label class="tg"><input type="checkbox" id="hideDelta"> 토큰 델타 접기<span style="color:var(--faint)">(표시 필터)</span></label>
+  <span class="conn stat" id="conn">대기</span>
+</header>
+
+<div class="tiers" id="tiers">
+  <div class="tier t-terra" data-tier="terra"><div class="n">TERRA</div><div class="d">계획 · 최종판정</div><div class="c" data-c>0 events</div></div>
+  <div class="tier t-luna"  data-tier="luna"><div class="n">LUNA</div><div class="d">초안 · 대질 대응</div><div class="c" data-c>0 events</div></div>
+  <div class="tier t-sol"   data-tier="sol"><div class="n">SOL</div><div class="d">검증 판정 ×N 병렬</div><div class="c" data-c>0 events</div></div>
+  <div class="tier t-liner" data-tier="liner"><div class="n">LINER</div><div class="d">근거 검색 · 시각화</div><div class="c" data-c>0 events</div></div>
+  <div class="tier t-code"  data-tier="code"><div class="n">CODE</div><div class="d">집계 · 조립 (LLM 0)</div><div class="c" data-c>0 events</div></div>
+</div>
+
+<main id="log"><div class="empty">runId를 기다리는 중… <code>?run=&lt;id&gt;</code> 를 붙이거나 메인 화면에서 실행하세요.</div></main>
+
+<script>
+const API_ORIGIN=location.protocol==='file:'?'http://127.0.0.1:8000':'';
+const api=(path)=>API_ORIGIN+path;
+// 규칙: payload는 가공하지 않는다. 여기서 하는 일은 seq 정렬과 색칠·접기(표시 필터)뿐이다.
+const $ = (id) => document.getElementById(id);
+const qs = new URLSearchParams(location.search);
+const runId = qs.get('run');
+
+const TIER_OF = [
+  [/^pipeline\./,          'code'],
+  [/^00_profiler/,         'code'],
+  [/^01_planner/,          'terra'],
+  [/^01b_deep_research/,   'liner'],
+  [/^02_proposer/,         'luna'],
+  [/^03_critic/,           'sol'],
+  [/^04_reviser/,          'luna'],
+  [/^05_visualizer/,       'liner'],
+  [/^06_judge/,            'terra'],
+];
+const COLOR = {terra:'var(--terra)',luna:'var(--luna)',sol:'var(--sol)',
+               liner:'var(--liner)',code:'var(--code)'};
+
+let n=0, tc=0, lastSeq=-1, t0=null;
+const counts = {terra:0,luna:0,sol:0,liner:0,code:0};
+
+function classify(name){
+  // Liner 툴 호출은 어느 단계에서 일어나든 Liner 색으로 — 협업 지점이 보여야 한다
+  if(/tool_call|tool_called|tool_output/.test(name) && /liner|search|visual|research/i.test(name)) return 'liner';
+  for(const [re,t] of TIER_OF) if(re.test(name)) return t;
+  return 'code';
+}
+
+function render(ev){
+  const name = ev.__name || '';
+  const tier = classify(name);
+  const isDelta = /raw_response_event/.test(name)
+                  && ev.payload && (ev.payload.delta !== undefined);
+  const isNote  = /^pipeline\./.test(name);
+  const isTool  = /tool_call|tool_called|tool_output/.test(name);
+
+  n++; if(isTool) tc++;
+  counts[tier]++;
+  $('n').textContent = n; $('tc').textContent = tc;
+  document.querySelector(`.tier[data-tier="${tier}"] [data-c]`).textContent = counts[tier]+' events';
+  document.querySelectorAll('.tier').forEach(el=>el.classList.remove('hot'));
+  document.querySelector(`.tier[data-tier="${tier}"]`).classList.add('hot');
+
+  if(t0===null) t0=Date.now();
+  $('el').innerHTML = 'elapsed <b>'+((Date.now()-t0)/1000).toFixed(0)+'s</b>';
+
+  const claim = (name.match(/03_critic\.(V\d+)/)||[])[1];
+  const el = document.createElement('div');
+  el.className = 'ev' + (isDelta?' delta':'') + (isNote?' note':'');
+  el.style.setProperty('--c', COLOR[tier]);
+  el.dataset.delta = isDelta ? '1' : '0';
+  el.innerHTML =
+    `<div class="hd"><span class="seq">${ev.__seq}</span>`+
+    `<span class="chip">${tier}</span>`+
+    `<span class="stg">${name}</span>`+
+    (claim?`<span class="lane">[${claim}]</span>`:'')+
+    `</div><pre></pre>`;
+  el.querySelector('pre').textContent = isDelta
+    ? JSON.stringify(ev.payload.delta)          // 델타는 한 줄로. 원문 그대로다.
+    : JSON.stringify(ev.payload, null, 2);
+  if($('hideDelta').checked && isDelta) el.style.display='none';
+
+  const log = $('log');
+  if(log.firstElementChild?.className==='empty') log.innerHTML='';
+  log.appendChild(el);
+  while(log.children.length > 2500) log.removeChild(log.firstChild);  // DOM 상한
+  const near = log.scrollTop + log.clientHeight > log.scrollHeight - 240;
+  if(near) log.scrollTop = log.scrollHeight;
+}
+
+$('hideDelta').addEventListener('change', (e)=>{
+  document.querySelectorAll('.ev[data-delta="1"]')
+    .forEach(el=>el.style.display = e.target.checked ? 'none' : '');
+});
+
+// EventSource는 event: 이름이 붙으면 onmessage로 안 온다.
+// 이름을 미리 알 수 없으므로 fetch + ReadableStream 으로 직접 파싱한다.
+async function streamRaw(id){
+  $('run').textContent = id;
+  $('conn').textContent='● live'; $('conn').style.color='var(--ok)';
+  const res = await fetch(api(`/api/v1/runs/${id}/events`), {headers:{Accept:'text/event-stream'}});
+  const reader = res.body.getReader();
+  const dec = new TextDecoder();
+  let buf='';
+  while(true){
+    const {value,done} = await reader.read();
+    if(done) break;
+    buf += dec.decode(value,{stream:true});
+    const frames = buf.split('\n\n'); buf = frames.pop();
+    for(const f of frames){
+      if(!f.trim() || f.startsWith(':')) continue;
+      let seq=null, name='message', data='';
+      for(const line of f.split('\n')){
+        if(line.startsWith('id: ')) seq = Number(line.slice(4));
+        else if(line.startsWith('event: ')) name = line.slice(7);
+        else if(line.startsWith('data: ')) data += line.slice(6);
+      }
+      if(seq===null || seq<=lastSeq) continue;
+      lastSeq = seq;
+      let payload; try{ payload = JSON.parse(data); }catch{ payload = {raw:data}; }
+      render({__seq:seq,__name:name,payload});
+      if(name==='run_completed'||name==='run_failed'){
+        $('conn').textContent = name==='run_completed' ? '완료' : '실패';
+        $('conn').style.color = name==='run_completed' ? 'var(--ok)' : 'var(--bad)';
+      }
+    }
+  }
+}
+
+if(runId) streamRaw(runId).catch(e=>{ $('conn').textContent='끊김: '+e; });
+window.addEventListener('message', (e)=>{ if(e.data?.runId && !runId) streamRaw(e.data.runId); });
+</script>
+</body>
+</html>

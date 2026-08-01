@@ -1,76 +1,19 @@
-export type Stage = "manager" | "data" | "trade" | "visualization" | "planner" | "news" | "rca" | "writer" | "qa" | "completed" | "error";
+export type Mode = "fast" | "live" | "full";
+export type OutputType = "report" | "paper";
+export type AgentKey = "terra" | "code" | "luna" | "sol" | "liner";
 
-export interface ResearchRequest {
-  countries: string[];
-  products: string[];
-  unit: string;
-  length: number;
-  start_period: string;
-  end_period: string;
-  title?: string;
+export interface RunRequest { input: string; mode: Mode; output_type: OutputType }
+export interface RunAccepted { id: string; status: string; events_url: string }
+export interface Evidence { title: string; url?: string; quote?: string; year?: number; citations?: number }
+export interface ReportSentence { text: string; status: string; evidence?: Evidence[] }
+export interface ReportSection { heading: string; sentences: ReportSentence[] }
+export interface Chart { title: string; ok: boolean; html?: string; fallback_rows?: Metric[] }
+export interface Metric { label: string; value_usd: number; mom_pct?: number; yoy_pct?: number; share?: number }
+export interface MonthMetric { period: string; value_usd: number; mom_pct?: number; yoy_pct?: number }
+export interface Report {
+  headline: string; period: string; focus: string; confidence_level: string; output_type?: OutputType;
+  sections: ReportSection[]; charts: Chart[]; timeseries?: { monthly_series?: MonthMetric[]; items?: Metric[] };
+  audit?: Record<string, any>; evidence_audit?: Record<string, any>; data_provenance?: Record<string, any>;
+  anomaly_warnings?: Record<string, any>[]; revision_watch?: Record<string, any>[];
 }
-
-export interface ResearchDataAvailability {
-  available: boolean;
-  message: string;
-  matching_sources: Array<{
-    file_path: string;
-    sheet_name: string;
-    purpose: string;
-  }>;
-  matching_record_count: number;
-}
-
-export interface TimelineEvent {
-  id: string;
-  runId: string;
-  event: string;
-  stage: Stage;
-  message: string;
-  payload?: Record<string, unknown>;
-  time: Date;
-}
-
-export interface RunSummary {
-  id: string;
-  status: "queued" | "running" | "completed" | "failed";
-  current_stage: string | null;
-  error_message: string | null;
-  created_at: string;
-  updated_at: string;
-}
-
-export interface ReportSection {
-  heading: string;
-  content: string;
-}
-
-export interface ReportDraft {
-  title: string;
-  executive_summary: string;
-  sections: ReportSection[];
-  conclusion: string;
-  limitations: string[];
-  claims: Array<{ claim_id: string; text: string; trade_evidence_ids: string[]; web_evidence_ids: string[]; scholar_evidence_ids: string[] }>;
-  references: string[];
-  markdown: string;
-}
-
-export interface ResearchResult {
-  request: ResearchRequest;
-  data_check: Record<string, unknown> | null;
-  trade_analysis: Record<string, unknown>;
-  anomaly_points: Record<string, unknown>[];
-  visualization: { html: string; theme: string; description: string; provider: string } | null;
-  report_plan: Record<string, unknown> | null;
-  news_analysis: Record<string, unknown>;
-  rca_analysis: Record<string, unknown> | null;
-  report: ReportDraft;
-  qa: Record<string, unknown>;
-  revision_count: number;
-}
-
-export interface RunDetail extends RunSummary {
-  request: ResearchRequest;
-  result: ResearchResult | null;
-}
+export interface TimelineEvent { id: number; name: string; payload: Record<string, any>; stage: string; agent: AgentKey }
