@@ -25,6 +25,13 @@ const initialRequest: ResearchRequest = {
   end_period: "2025-06",
 };
 
+const countryOptions = ["중국", "미국", "아세안", "EU", "일본", "독일", "인도", "중동", "중남미", "CIS"];
+const productOptions = [
+  "반도체", "컴퓨터", "디스플레이", "무선통신기기", "자동차", "자동차부품", "선박",
+  "석유제품", "석유화학", "이차전지", "일반기계", "철강", "비철금속", "전기기기",
+  "바이오헬스", "화장품", "농수산식품", "섬유", "가전", "생활용품",
+];
+
 function App() {
   const [request, setRequest] = useState(initialRequest);
   const [events, setEvents] = useState<TimelineEvent[]>([]);
@@ -47,6 +54,14 @@ function App() {
 
   async function startResearch(event: FormEvent) {
     event.preventDefault();
+    if (!request.countries.length || !request.products.length) {
+      setError("최소 한 개의 국가와 품목을 선택하거나 입력하세요.");
+      return;
+    }
+    if (request.start_period > request.end_period) {
+      setError("종료 월은 시작 월보다 빠를 수 없습니다.");
+      return;
+    }
     setLoading(true);
     setError(null);
     setEvents([]);
@@ -101,15 +116,18 @@ function App() {
         <aside className="control-rail">
           <form onSubmit={startResearch} className="research-form">
             <div className="form-heading"><span>01</span><h2>Research brief</h2></div>
-            <label>국가<input value={request.countries.join(", ")} onChange={(event) => setRequest({ ...request, countries: splitList(event.target.value) })} /></label>
-            <label>품목<input value={request.products.join(", ")} onChange={(event) => setRequest({ ...request, products: splitList(event.target.value) })} /></label>
+            <MultiSelectInput id="countries" label="국가·지역" values={request.countries} options={countryOptions} placeholder="선택하거나 직접 입력" onChange={(countries) => setRequest({ ...request, countries })} />
+            <MultiSelectInput id="products" label="품목" values={request.products} options={productOptions} placeholder="선택하거나 직접 입력" onChange={(products) => setRequest({ ...request, products })} />
             <div className="two-up">
-              <label>단위<input value={request.unit} onChange={(event) => setRequest({ ...request, unit: event.target.value })} /></label>
+              <label>표시 단위<select value={request.unit} onChange={(event) => setRequest({ ...request, unit: event.target.value })}><option value="USD">USD</option><option value="KRW">KRW</option><option value="thousand USD">천 USD</option></select></label>
               <label>분량<input type="number" min="300" max="5000" value={request.length} onChange={(event) => setRequest({ ...request, length: Number(event.target.value) })} /></label>
             </div>
-            <div className="two-up">
-              <label>시작<input type="month" value={request.start_period} onChange={(event) => setRequest({ ...request, start_period: event.target.value })} /></label>
-              <label>종료<input type="month" value={request.end_period} onChange={(event) => setRequest({ ...request, end_period: event.target.value })} /></label>
+            <div className="date-range" role="group" aria-label="분석 기간">
+              <span>분석 기간</span>
+              <div className="two-up">
+                <label>시작 월<input className="calendar-input" type="month" value={request.start_period} max={request.end_period} onChange={(event) => setRequest({ ...request, start_period: event.target.value })} /></label>
+                <label>종료 월<input className="calendar-input" type="month" value={request.end_period} min={request.start_period} onChange={(event) => setRequest({ ...request, end_period: event.target.value })} /></label>
+              </div>
             </div>
             <button className="run-button" disabled={loading} type="submit">{loading ? "ANALYZING…" : "START RESEARCH"}<span>↗</span></button>
           </form>
@@ -150,6 +168,40 @@ function App() {
       </section>
     </main>
   );
+}
+
+function MultiSelectInput({
+  id,
+  label,
+  values,
+  options,
+  placeholder,
+  onChange,
+}: {
+  id: string;
+  label: string;
+  values: string[];
+  options: string[];
+  placeholder: string;
+  onChange: (values: string[]) => void;
+}) {
+  const [input, setInput] = useState("");
+
+  function addInput() {
+    const additions = splitList(input).filter((value) => !values.includes(value));
+    if (additions.length) onChange([...values, ...additions]);
+    setInput("");
+  }
+
+  return <label className="selection-field">
+    <span>{label}</span>
+    <div className="selection-control">
+      {values.map((value) => <span className="selection-chip" key={value}>{value}<button type="button" onClick={() => onChange(values.filter((item) => item !== value))} aria-label={`${value} 제거`}>×</button></span>)}
+      <input aria-label={`${label} 선택 또는 입력`} list={`${id}-options`} value={input} placeholder={placeholder} onChange={(event) => setInput(event.target.value)} onBlur={addInput} onKeyDown={(event) => { if (event.key === "Enter" || event.key === ",") { event.preventDefault(); addInput(); } }} />
+    </div>
+    <datalist id={`${id}-options`}>{options.filter((option) => !values.includes(option)).map((option) => <option value={option} key={option} />)}</datalist>
+    <small>목록에서 선택하거나 입력 후 Enter</small>
+  </label>;
 }
 
 function ReportView({ run }: { run: RunDetail }) {
